@@ -1,0 +1,545 @@
+# backend/users/serializers.py
+from rest_framework import serializers
+from django.db import transaction
+from django.contrib.auth.hashers import make_password
+import secrets
+import string
+from django.contrib.auth import get_user_model, authenticate
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Office, Department, Position, WorkingOffice
+
+class PositionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Position
+        fields = '__all__'
+
+class RobustPrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
+    def to_internal_value(self, data):
+        if self.pk_field is not None:
+            data = self.pk_field.to_internal_value(data)
+        try:
+            # Use .filter().first() instead of .get() to handle external views with duplicate IDs
+            obj = self.get_queryset().filter(pk=data).first()
+            if obj is None:
+                self.fail('does_not_exist', pk_value=data)
+            return obj
+        except (TypeError, ValueError):
+            self.fail('incorrect_type', data_type=type(data).__name__)
+from .tasks import send_welcome_email
+from utils.ntc_otp import send_otp as ntc_send_otp
+from django.utils import timezone
+from datetime import timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    employee_id = serializers.CharField()  # Input field for employee_id or email
+
+    def validate(self, attrs):
+        identifier = attrs.get('employee_id')
+        password = attrs.get('password')
+        user = None
+
+        try:
+            user = User.objects.get(employee_id=identifier)
+        except User.DoesNotExist:
+            try:
+                user = User.objects.get(email=identifier)
+            except User.DoesNotExist:
+                raise serializers.ValidationError('No active account found with the given credentials')
+
+        credentials = {'employee_id': user.employee_id, 'password': password}
+        user = authenticate(request=self.context.get('request'), **credentials)
+
+        if not user:
+            raise serializers.ValidationError('No active account found with the given credentials')
+
+        # Check if OTP is enabled for this user
+        if user.otp_enabled:
+            phone_number = getattr(user, 'phone', None)
+            if not phone_number:
+                logger.error(f"OTP enabled but no phone number for user {user.employee_id}")
+                raise serializers.ValidationError(
+                    'OTP is enabled but no phone number is registered. Please contact admin.'
+                )
+
+            # Send OTP via NTC service
+            otp_result = ntc_send_otp(
+                phone_number,
+                message=f"Dear User, your PMS login code is <OTP>. Valid for 5 minutes."
+            )
+
+            if not otp_result['success']:
+                logger.error(f"Failed to send OTP to {user.employee_id}: {otp_result['error']}")
+                raise serializers.ValidationError(
+                    'Failed to send OTP. Please try again later.'
+                )
+
+            # Get client IP
+            request = self.context.get('request')
+            ip_address = None
+            if request:
+                forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+                ip_address = forwarded.split(',')[0].strip() if forwarded else request.META.get('REMOTE_ADDR')
+
+            # Invalidate any previous active OTPs for this user
+            OTPLog.objects.filter(
+                user=user, status='sent'
+            ).update(status='invalidated')
+
+            # Create OTP log entry
+            expiry_minutes = int(getattr(
+                __import__('django.conf', fromlist=['settings']).settings,
+                'OTP_EXPIRY_MINUTES', 5
+            ))
+            OTPLog.objects.create(
+                user=user,
+                phone=phone_number,
+                seq_no=otp_result['seq_no'],
+                purpose='login',
+                status='sent',
+                ip_address=ip_address,
+                expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
+            )
+
+            # Mask phone number for frontend display
+            phone_hint = f"***{phone_number[-4:]}" if len(phone_number) >= 4 else "***"
+
+            # Return OTP-required response (no tokens issued)
+            raise serializers.ValidationError({
+                'otp_required': True,
+                'user_id': user.employee_id,
+                'phone_hint': phone_hint,
+                'detail': 'OTP sent to your registered phone number.',
+            })
+
+        # If no OTP needed, continue normal login flow
+        data = super().validate(attrs)
+        refresh = self.get_token(user)
+        data['refresh'] = str(refresh)
+        data['access'] = str(refresh.access_token)
+        data['user'] = {
+            '_id': user._id,
+            'name': self.get_full_name(user),
+            'email': user.email,
+            'employeeId': user.employee_id,
+            'user_role': {
+                'id': user.user_role.id,
+                'name': user.user_role.name,
+                'description': user.user_role.description,
+                'permissions': user.get_permission_codenames(),
+            } if user.user_role_id else None,
+            'department': user.department,
+            'phoneNumber': user.phone,
+            'designation': user.designation,
+            'isActive': user.is_active,
+            'otpEnabled': user.otp_enabled,
+            'office': {
+                'id': user.office.id,
+                'name': user.office.name,
+                'code': user.office.code,
+            } if getattr(user, 'office', None) else None,
+            'working_office': {
+                'id': user.working_office.id,
+                'name': user.working_office.name_of_office,
+            } if getattr(user, 'working_office', None) else None,
+        }
+        return data
+
+    def get_full_name(self, user):
+        """Combine first_name and last_name, fallback to name field"""
+        if user.first_name or user.last_name:
+            return f"{user.first_name} {user.last_name}".strip()
+        return user.name or ''
+
+
+
+# ---------------------------------------------------------------------------
+# New RBAC serializers
+# ---------------------------------------------------------------------------
+
+class PermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Permission
+        fields = ['id', 'codename', 'name', 'group', 'description', 'is_active']
+
+
+class OfficeSerializer(serializers.ModelSerializer):
+    department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all(), required=False, allow_null=True)
+    department_details = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Office
+        fields = ['id', 'name', 'code', 'departments', 'department', 'department_details', 'department_name', 'parent']
+
+    def get_department_details(self, obj):
+        if not obj.department:
+            return None
+        return {
+            'id': obj.department.id,
+            'name': obj.department.name,
+            'code': obj.department.code,
+            'description': obj.department.description,
+        }
+
+    def get_department_name(self, obj):
+        return obj.department_name
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    office_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Department
+        fields = ['id', 'name', 'code', 'description', 'office_count', 'created_at', 'updated_at']
+
+    def get_office_count(self, obj):
+        return obj.offices.count()
+
+
+class WorkingOfficeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkingOffice
+        fields = ['id', 'name_of_office', 'directorate_id', 'ac_office_id', 'cc_office_id']
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    permissions = serializers.SerializerMethodField()
+    user_count  = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'is_active', 'permissions', 'user_count', 'created_at', 'updated_at']
+
+    def get_permissions(self, obj):
+        perms = Permission.objects.filter(
+            role_permissions__role=obj,
+            role_permissions__is_active=True,
+        )
+        return PermissionSerializer(perms, many=True).data
+
+    def get_user_count(self, obj):
+        return obj.users.count()
+
+
+class PermissionAuditLogSerializer(serializers.ModelSerializer):
+    role_name = serializers.CharField(source='role.name', read_only=True)
+    user_name  = serializers.CharField(source='user.email', read_only=True)
+
+    class Meta:
+        model = PermissionAuditLog
+        fields = [
+            'id', 'role', 'role_name', 'user', 'user_name',
+            'action', 'permission', 'old_permissions', 'new_permissions',
+            'details', 'timestamp', 'ip_address',
+        ]
+
+# ... keep existing code (UserSerializer, EmployeeByIdSerializer, RegisterSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, EmployeeDetailSerializer, CreateUserFromEmployeeSerializer, EmployeeToUserPreviewSerializer)
+
+
+class UserSerializer(serializers.ModelSerializer):
+    _id         = serializers.CharField(source='employee_id')
+    employeeId  = serializers.CharField(source='employee_id')
+    name        = serializers.SerializerMethodField()
+    phoneNumber = serializers.CharField(source='phone', allow_null=True, allow_blank=True, required=False)
+    isActive    = serializers.BooleanField(source='is_active', required=False)
+    otpEnabled  = serializers.BooleanField(source='otp_enabled', default=False, required=False)
+    user_role   = RoleSerializer(read_only=True, allow_null=True)
+    office      = OfficeSerializer(read_only=True, allow_null=True)
+    working_office = serializers.SerializerMethodField()
+    position_details = PositionSerializer(source='position', read_only=True, allow_null=True)
+    department  = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    designation = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    user_role_id = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(),
+        source='user_role',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    office_id = serializers.PrimaryKeyRelatedField(
+        queryset=Office.objects.all(),
+        source='office',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    working_office_id = RobustPrimaryKeyRelatedField(
+        queryset=WorkingOffice.objects.all(),
+        source='working_office',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    position_id = serializers.PrimaryKeyRelatedField(
+        queryset=Position.objects.all(),
+        source='position',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
+    user_role_details = serializers.SerializerMethodField()
+    office_details = serializers.SerializerMethodField()
+    working_office_details = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            '_id', 'employeeId', 'name', 'email', 'phoneNumber', 'department', 'designation',
+            'isActive', 'otpEnabled', 'user_role', 'user_role_id', 'office', 'office_id', 
+            'working_office', 'working_office_id', 'position_id', 'position_details', 'last_login', 'is_staff',
+            'user_role_details', 'office_details', 'working_office_details', 'permissions'
+        ]
+        extra_kwargs = {
+            'employeeId': {'read_only': True},
+            '_id': {'read_only': True},
+        }
+
+    def get_name(self, obj):
+        """Combine first_name and last_name, fallback to name field"""
+        if obj.first_name or obj.last_name:
+            return f"{obj.first_name} {obj.last_name}".strip()
+        return obj.name or ''
+
+    def get_user_role_details(self, obj):
+        if hasattr(obj, 'user_role') and obj.user_role:
+            return {'id': obj.user_role.id, 'name': obj.user_role.name}
+        return None
+
+    def get_office_details(self, obj):
+        if hasattr(obj, 'office') and obj.office:
+            return {'id': obj.office.id, 'name': obj.office.name, 'code': obj.office.code}
+        return None
+
+    def get_working_office(self, obj):
+        office_id = getattr(obj, 'working_office_id', None)
+        if office_id:
+            office = WorkingOffice.objects.filter(id=office_id).first()
+            if office:
+                return WorkingOfficeSerializer(office).data
+        return None
+
+    def get_working_office_details(self, obj):
+        office_id = getattr(obj, 'working_office_id', None)
+        if office_id:
+            office = WorkingOffice.objects.filter(id=office_id).first()
+            if office:
+                return {'id': office.id, 'name': office.name_of_office}
+        return None
+
+    def get_permissions(self, obj):
+        return obj.get_permission_codenames()
+
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        # Handle 'name' from request data (it's a SerializerMethodField so not in validated_data)
+        request = self.context.get('request')
+        if request and 'name' in request.data:
+            name_value = request.data['name']
+            if name_value is not None:
+                name_str = str(name_value).strip()
+                logger.info(f"UserSerializer.update: Setting name to '{name_str}' for user {instance.employee_id}")
+                parts = name_str.split(' ', 1)
+                instance.first_name = parts[0]
+                instance.last_name = parts[1] if len(parts) > 1 else ''
+                instance.name = name_str
+
+        logger.info(f"UserSerializer.update: Saving user {instance.employee_id} with validated_data: {validated_data}")
+        instance.save()
+        return instance
+
+
+class EmployeeByIdSerializer(serializers.ModelSerializer):
+    _id = serializers.CharField(source='employee_id')
+    employeeId = serializers.CharField(source='employee_id')
+    name = serializers.SerializerMethodField()
+    isActive = serializers.BooleanField(source='is_active')
+    otpEnabled = serializers.BooleanField(source='otp_enabled')
+    department = serializers.CharField(allow_blank=True)
+    designation = serializers.CharField(allow_blank=True)
+    phoneNumber = serializers.CharField(source='phone', read_only=True, allow_null=True)
+    position_name = serializers.SlugRelatedField(source='position', slug_field='name', read_only=True)
+    permissions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            '_id', 'name', 'email', 'employeeId', 'department',
+            'phoneNumber', 'designation', 'position_name', 'isActive', 'otpEnabled', 'permissions',
+            'user_role', 'office'
+        ]
+
+    def get_name(self, obj):
+        """Combine first_name and last_name, fallback to name field"""
+        if obj.first_name or obj.last_name:
+            return f"{obj.first_name} {obj.last_name}".strip()
+        return obj.name or ''
+
+    def get_permissions(self, obj):
+        return obj.get_permission_codenames()
+
+
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), source='user_role', required=True)
+    office = serializers.PrimaryKeyRelatedField(queryset=Office.objects.all(), required=False, allow_null=True)
+    working_office = serializers.PrimaryKeyRelatedField(queryset=WorkingOffice.objects.all(), required=False, allow_null=True)
+
+    class Meta:
+        model = CustomUser
+        fields = ['employee_id', 'name', 'username', 'email', 'phone', 'department', 'designation', 'password', 'role', 'office', 'working_office']
+        extra_kwargs = {'password': {'write_only': True}}
+
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = CustomUser(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+    def validate(self, data):
+        if CustomUser.objects.filter(employee_id=data['employee_id']).exists():
+            raise serializers.ValidationError("A user with this employee ID already exists.")
+        return data
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    employee_id = serializers.CharField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+
+class EmployeeDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeDetail
+        fields = ['employee_id', 'name', 'email', 'position', 'level', 'service',
+                  'group', 'qualification', 'seniority', 'retirement', 'mno']
+
+
+class CreateUserFromEmployeeSerializer(serializers.Serializer):
+    employee_id = serializers.CharField(max_length=10)
+    role_id = serializers.IntegerField()
+    auto_generate_password = serializers.BooleanField(default=True)
+    password = serializers.CharField(max_length=128, required=False, allow_blank=True)
+
+    def validate_employee_id(self, value):
+        """Validate that the employee exists and hasn't been converted to a user yet"""
+        try:
+            employee = EmployeeDetail.objects.get(employee_id=value)
+        except EmployeeDetail.DoesNotExist:
+            raise serializers.ValidationError(f"Employee with ID {value} does not exist.")
+
+        # Check if user already exists for this employee
+        if CustomUser.objects.filter(employee_id=value).exists():
+            raise serializers.ValidationError(f"User already exists for employee ID {value}.")
+
+        return value
+
+    def validate_role_id(self, value):
+        """Validate that the role exists"""
+        try:
+            role = Role.objects.get(id=value)
+        except Role.DoesNotExist:
+            raise serializers.ValidationError(f"Role with ID {value} does not exist.")
+            raise serializers.ValidationError(f"Role with ID {value} does not exist.")
+        return value
+
+    def validate(self, data):
+        """Cross-field validation"""
+        if not data.get('auto_generate_password') and not data.get('password'):
+            raise serializers.ValidationError("Password is required when auto_generate_password is False.")
+        return data
+
+    def create(self, validated_data):
+        """Create a new user from employee data"""
+        employee_id = validated_data['employee_id']
+        role_id = validated_data['role_id']
+        auto_generate_password = validated_data.get('auto_generate_password', True)
+        custom_password = validated_data.get('password')
+
+        # Get employee and role objects
+        employee = EmployeeDetail.objects.get(employee_id=employee_id)
+        role = Role.objects.get(id=role_id)
+
+        # Generate password if needed
+        if auto_generate_password:
+            password = self._generate_random_password()
+        else:
+            password = custom_password
+
+        # Map employee fields to user fields
+        user_data = {
+            'employee_id': employee.employee_id,
+            'email': employee.email,
+            'name': employee.name or '',
+            'phone': employee.mno or '',
+            'department': employee.group or '',
+            'designation': employee.position or '',
+            'user_role': role,
+            'is_active': True,
+            'otp_enabled': False,
+            'password': password
+        }
+
+        # Create the user
+        user = CustomUser.objects.create_user(**user_data)
+
+        # Store the plain password for response (will be removed in production)
+        user._generated_password = password if auto_generate_password else None
+
+        return user
+
+    def _generate_random_password(self, length=12):
+        """Generate a random password"""
+        characters = string.ascii_letters + string.digits + "!@#$%^&*"
+        return ''.join(secrets.choice(characters) for _ in range(length))
+
+
+class EmployeeToUserPreviewSerializer(serializers.ModelSerializer):
+    """Serializer to preview how employee data will map to user fields"""
+    mapped_name = serializers.SerializerMethodField()
+    mapped_phone = serializers.SerializerMethodField()
+    mapped_department = serializers.SerializerMethodField()
+    mapped_designation = serializers.SerializerMethodField()
+    can_create_user = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeDetail
+        fields = ['employee_id', 'name', 'email', 'position', 'group', 'mno',
+                  'mapped_name', 'mapped_phone', 'mapped_department', 'mapped_designation', 'can_create_user']
+
+    def get_mapped_name(self, obj):
+        return obj.name or ''
+
+    def get_mapped_phone(self, obj):
+        return obj.mno or ''
+
+    def get_mapped_department(self, obj):
+        return obj.group or ''
+
+    def get_mapped_designation(self, obj):
+        return obj.position or ''
+
+    def get_can_create_user(self, obj):
+        return not CustomUser.objects.filter(employee_id=obj.employee_id).exists()
+
+
+class OTPVerifySerializer(serializers.Serializer):
+    user_id = serializers.CharField(write_only=True)
+    otp = serializers.CharField(write_only=True, min_length=4, max_length=8)
+
+
+class OTPResendSerializer(serializers.Serializer):
+    user_id = serializers.CharField()
