@@ -278,6 +278,25 @@ class CommitteeSerializer(serializers.ModelSerializer):
 
         if len(employee_ids) != len(set(employee_ids)):
             raise serializers.ValidationError("Duplicate employee IDs are not allowed.")
+
+        role_counts = {
+            'coordinator': 0,
+            'secretary': 0,
+        }
+
+        for member in normalized_members:
+            normalized_role = (member.get('role') or '').lower()
+            if normalized_role == 'coordinator':
+                role_counts['coordinator'] += 1
+            if normalized_role == 'secretary':
+                role_counts['secretary'] += 1
+
+        if role_counts['coordinator'] != 1:
+            raise serializers.ValidationError("Exactly one coordinator must be assigned in members.")
+
+        if role_counts['secretary'] != 1:
+            raise serializers.ValidationError("Exactly one secretary must be assigned in members.")
+
         return normalized_members
 
     def validate_procurement_plan(self, value):

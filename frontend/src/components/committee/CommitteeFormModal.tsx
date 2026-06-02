@@ -19,13 +19,20 @@ import { officesService } from "@/api/offices";
 import { usersService, User } from "@/api/users";
 import { toast } from "sonner";
 import { Search, X, Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+
+const fallbackRoleOptions = [
+  { id: 1, value: "coordinator", label: "Coordinator" },
+  { id: 2, value: "secretary", label: "Secretary" },
+  { id: 3, value: "member", label: "Member" },
+];
+
+const getEmployeeId = (user: any) => user.employeeId || user.employee_id || user._id || "";
 
 const formatDateInput = (date: Date) => {
   const year = date.getFullYear();
@@ -100,6 +107,7 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
 
   // Member Management State
   const [selectedMembers, setSelectedMembers] = useState<User[]>([]);
+  const [memberRoles, setMemberRoles] = useState<Record<string, string>>({});
   const [memberSearch, setMemberSearch] = useState("");
   const [isMemberPopoverOpen, setIsMemberPopoverOpen] = useState(false);
 
@@ -113,6 +121,17 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
   const { data: users } = useQuery({
     queryKey: ["users"],
     queryFn: usersService.getAll,
+    enabled: isOpen,
+  });
+
+  const { data: roleOptions = fallbackRoleOptions } = useQuery({
+    queryKey: ["committee-roles"],
+    queryFn: async () => {
+      const response = await committeesService.getRoles();
+      const roles = Array.isArray(response?.data) ? response.data : [];
+      if (!roles.length) return fallbackRoleOptions;
+      return roles;
+    },
     enabled: isOpen,
   });
 
@@ -158,18 +177,26 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
       // Members
       if (committeeToEdit.membersList && users) {
         const restoredMembers = users.filter((u) => {
-          const empId = u.employeeId || u.employee_id || u._id;
+          const empId = getEmployeeId(u);
           return committeeToEdit.membersList?.some((m) => m.employeeId === empId);
         });
         setSelectedMembers(restoredMembers);
+
+        const restoredRoles: Record<string, string> = {};
+        committeeToEdit.membersList.forEach((m) => {
+          restoredRoles[m.employeeId] = (m.role || "member").toLowerCase();
+        });
+        setMemberRoles(restoredRoles);
       } else {
          setSelectedMembers([]);
+         setMemberRoles({});
       }
       setFormationLetter(null);
     } else if (!isOpen) {
       reset();
       setDeadlineDays("30");
       setSelectedMembers([]);
+      setMemberRoles({});
       setMemberSearch("");
       setFormationLetter(null);
     }
@@ -179,30 +206,65 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
   useEffect(() => {
       if (committeeToEdit && users && selectedMembers.length === 0 && (committeeToEdit.membersList?.length || 0) > 0) {
         const restoredMembers = users.filter((u) => {
-          const empId = u.employeeId || u.employee_id || u._id;
+          const empId = getEmployeeId(u);
           return committeeToEdit.membersList?.some((m) => m.employeeId === empId);
         });
         setSelectedMembers(restoredMembers);
+
+        const restoredRoles: Record<string, string> = {};
+        committeeToEdit.membersList?.forEach((m) => {
+          restoredRoles[m.employeeId] = (m.role || "member").toLowerCase();
+        });
+        setMemberRoles(restoredRoles);
       }
   }, [users, committeeToEdit]);
 
 
+  useEffect(() => {
+    setMemberRoles((prev) => {
+      const next: Record<string, string> = {};
+      selectedMembers.forEach((member: any) => {
+        const empId = getEmployeeId(member);
+        if (empId) {
+          next[empId] = prev[empId] || "member";
+        }
+      });
+      return next;
+    });
+  }, [selectedMembers]);
+
+
   const toggleMember = (user: any) => {
+    const userEmpId = getEmployeeId(user);
+
     setSelectedMembers((prev) => {
-      const userEmpId = user.employeeId || user.employee_id || user._id;
       const exists = prev.find((u: any) => {
-        const uEmpId = u.employeeId || u.employee_id || u._id;
+        const uEmpId = getEmployeeId(u);
         return uEmpId === userEmpId;
       });
       
       if (exists) {
+        setMemberRoles((previousRoles) => {
+          const updatedRoles = { ...previousRoles };
+          delete updatedRoles[userEmpId];
+          return updatedRoles;
+        });
         return prev.filter((u: any) => {
-          const uEmpId = u.employeeId || u.employee_id || u._id;
+          const uEmpId = getEmployeeId(u);
           return uEmpId !== userEmpId;
         });
       }
+
+      setMemberRoles((previousRoles) => ({
+        ...previousRoles,
+        [userEmpId]: previousRoles[userEmpId] || "member",
+      }));
       return [...prev, user];
     });
+  };
+
+  const handleRoleChange = (employeeId: string, role: string) => {
+    setMemberRoles((prev) => ({ ...prev, [employeeId]: role }));
   };
 
   const mutation = useMutation({
@@ -217,8 +279,8 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
       
       // Members as JSON string for multipart/form-data
       const members = selectedMembers.map((m: any) => ({
-        employeeId: m.employeeId || m.employee_id || m._id,
-        role: "member",
+        employeeId: getEmployeeId(m),
+        role: memberRoles[getEmployeeId(m)] || "member",
       }));
       formData.append("members", JSON.stringify(members));
 
@@ -253,6 +315,32 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
   });
 
   const onSubmit = (data: CommitteeFormValues) => {
+    const roleCounts = selectedMembers.reduce(
+      (acc, member: any) => {
+        const empId = getEmployeeId(member);
+        const role = (memberRoles[empId] || "member").toLowerCase();
+        if (role === "coordinator") acc.coordinator += 1;
+        if (role === "secretary") acc.secretary += 1;
+        return acc;
+      },
+      { coordinator: 0, secretary: 0 }
+    );
+
+    if (selectedMembers.length === 0) {
+      toast.error("Please add committee members before submitting.");
+      return;
+    }
+
+    if (roleCounts.coordinator !== 1) {
+      toast.error("Please assign exactly one coordinator.");
+      return;
+    }
+
+    if (roleCounts.secretary !== 1) {
+      toast.error("Please assign exactly one secretary.");
+      return;
+    }
+
     mutation.mutate({
       ...data,
       deadline: calculateDeadlineDate(data.formation_date || "", deadlineDays),
@@ -364,23 +452,38 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
           {/* Multi-Select Member logic */}
           <div className="space-y-2">
             <Label>Initial Members</Label>
-            <div className="flex flex-wrap gap-2 min-h-[40px] rounded-md border border-input bg-muted/30 p-2">
+            <div className="space-y-2 min-h-[40px] rounded-md border border-input bg-muted/30 p-2">
               {selectedMembers.length === 0 && (
                 <span className="text-sm text-muted-foreground p-1">No members selected yet.</span>
               )}
               {selectedMembers.map((member: any) => {
-                const empId = member.employeeId || member.employee_id || member._id;
+                const empId = getEmployeeId(member);
                 return (
-                <Badge key={empId} variant="secondary" className="flex gap-1 items-center pl-2 pr-1.5 py-1">
-                  {member.name || member.first_name || member.username} ({empId})
-                  <button
-                    type="button"
-                    onClick={() => toggleMember(member)}
-                    className="ml-1 hover:bg-destructive hover:text-white rounded-full p-0.5"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
+                <div key={empId} className="flex flex-col gap-2 rounded-md border bg-background p-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm">
+                    <span className="font-medium">{member.name || member.first_name || member.username}</span> ({empId})
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={memberRoles[empId] || "member"}
+                      onChange={(e) => handleRoleChange(empId, e.target.value)}
+                      className="h-9 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                    >
+                      {roleOptions.map((role: any) => (
+                        <option key={role.id || role.value} value={role.value}>
+                          {role.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => toggleMember(member)}
+                      className="hover:bg-destructive hover:text-white rounded-full p-1"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
               )})}
             </div>
             <Popover open={isMemberPopoverOpen} onOpenChange={setIsMemberPopoverOpen}>
