@@ -46,7 +46,7 @@ class StakeholderListCreateView(generics.ListCreateAPIView):
         'assignment_end_date': ['gte', 'lte'],
     }
     search_fields = [
-        'user__name', 'user__username', 'user__email',
+        'user__employee_profile__name', 'user__username', 'user__email',
         'procurement_plan__project_name', 'procurement_plan__policy_number',
         'responsibilities', 'notes'
     ]

@@ -27,6 +27,30 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
+const formatDateInput = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseDeadlineDays = (deadlineDays: string) => {
+  const parsed = Number.parseInt(deadlineDays, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const calculateDeadlineDate = (formationDate: string, deadlineDays: string) => {
+  if (!formationDate) return "";
+  const parsedDeadlineDays = parseDeadlineDays(deadlineDays);
+  if (!parsedDeadlineDays) return "";
+
+  const date = new Date(`${formationDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+
+  date.setDate(date.getDate() + parsedDeadlineDays);
+  return formatDateInput(date);
+};
+
 const committeeSchema = z.object({
   name: z.string().min(1, "Name is required"),
   purpose: z.string().min(1, "Purpose is required"),
@@ -47,6 +71,7 @@ interface Props {
 export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) {
   const queryClient = useQueryClient();
   const isEditing = !!committeeToEdit;
+  const [deadlineDays, setDeadlineDays] = useState("30");
 
   // Form Hook
   const {
@@ -70,6 +95,8 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
 
   const [formationLetter, setFormationLetter] = useState<File | null>(null);
   const currentOffice = watch("office");
+  const formationDate = watch("formation_date") || "";
+  const computedDeadline = calculateDeadlineDate(formationDate, deadlineDays);
 
   // Member Management State
   const [selectedMembers, setSelectedMembers] = useState<User[]>([]);
@@ -107,13 +134,24 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
   // Restoration on Edit
   useEffect(() => {
     if (committeeToEdit && isOpen) {
+      const restoredFormationDate = committeeToEdit.formation_date || "";
+      const restoredDeadline = committeeToEdit.deadline || "";
+      const formationDateObject = restoredFormationDate ? new Date(`${restoredFormationDate}T00:00:00`) : null;
+      const deadlineDateObject = restoredDeadline ? new Date(`${restoredDeadline}T00:00:00`) : null;
+      const restoredDeadlineDays =
+        formationDateObject && deadlineDateObject
+          ? Math.max(1, Math.round((deadlineDateObject.getTime() - formationDateObject.getTime()) / (1000 * 60 * 60 * 24)))
+          : 30;
+
+      setDeadlineDays(String(restoredDeadlineDays));
+
       // Core info
       reset({
         name: committeeToEdit.name,
         purpose: committeeToEdit.purpose,
         committee_type: committeeToEdit.committee_type,
-        deadline: committeeToEdit.deadline || "",
-        formation_date: committeeToEdit.formation_date || "",
+        deadline: restoredDeadline,
+        formation_date: restoredFormationDate,
         office: committeeToEdit.office ? String(committeeToEdit.office) : "",
       });
 
@@ -130,6 +168,7 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
       setFormationLetter(null);
     } else if (!isOpen) {
       reset();
+      setDeadlineDays("30");
       setSelectedMembers([]);
       setMemberSearch("");
       setFormationLetter(null);
@@ -214,7 +253,10 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
   });
 
   const onSubmit = (data: CommitteeFormValues) => {
-    mutation.mutate(data);
+    mutation.mutate({
+      ...data,
+      deadline: calculateDeadlineDate(data.formation_date || "", deadlineDays),
+    });
   };
 
   return (
@@ -255,7 +297,7 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
             {errors.purpose && <span className="text-sm text-red-500">{errors.purpose.message}</span>}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="committee_type">Type</Label>
               <select
@@ -273,13 +315,26 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="deadline">Deadline</Label>
-              <Input id="deadline" type="date" {...register("deadline")} />
+              <Label htmlFor="formation_date">Formation Date</Label>
+              <Input id="formation_date" type="date" {...register("formation_date")} />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="formation_date">Formation Date</Label>
-              <Input id="formation_date" type="date" {...register("formation_date")} />
+              <Label htmlFor="deadline_days">Deadline Days</Label>
+              <Input
+                id="deadline_days"
+                type="number"
+                min="1"
+                step="1"
+                value={deadlineDays}
+                onChange={(e) => setDeadlineDays(e.target.value)}
+                placeholder="Enter deadline days"
+              />
+            </div>
+
+            <div className="space-y-2 md:col-span-3">
+              <Label htmlFor="deadline_preview">Deadline Date</Label>
+              <Input id="deadline_preview" type="date" value={computedDeadline} readOnly />
             </div>
           </div>
 

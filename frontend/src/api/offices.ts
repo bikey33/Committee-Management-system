@@ -4,19 +4,16 @@ export interface Office {
   id: number;
   name: string;
   code: string;
-  parent?: number | null;
-  parent_name?: string; // Often APIs serialize a readable parent name
-  department?: number | null;
-  department_name?: string | null;
-  department_details?: Department | null;
-  departments?: string[];
+  directorate?: number | null;
+  directorate_name?: string | null;
+  directorate_details?: Directorate | null;
   created_at?: string;
+  updated_at?: string;
 }
 
-export interface Department {
+export interface Directorate {
   id: number;
   name: string;
-  code: string;
   description?: string;
   office_count?: number;
   created_at?: string;
@@ -49,18 +46,23 @@ export const officesService = {
     return response.data;
   },
 
-  getDepartments: async () => {
-    const response = await apiClient.get("/api/users/departments/");
+  getDirectorates: async () => {
+    const response = await apiClient.get("/api/users/directorates/");
     return response.data;
   },
 
-  createDepartment: async (data: Partial<Department>) => {
-    const response = await apiClient.post("/api/users/departments/create/", data);
+  createDirectorate: async (data: Partial<Directorate>) => {
+    const response = await apiClient.post("/api/users/directorates/create/", data);
     return response.data;
   },
 
-  deleteDepartment: async (id: number) => {
-    const response = await apiClient.delete(`/api/users/departments/${id}/delete/`);
+  updateDirectorate: async (id: number, data: Partial<Directorate>) => {
+    const response = await apiClient.put(`/api/users/directorates/${id}/`, data);
+    return response.data;
+  },
+
+  deleteDirectorate: async (id: number) => {
+    const response = await apiClient.delete(`/api/users/directorates/${id}/delete/`);
     return response.data;
   },
 };

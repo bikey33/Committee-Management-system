@@ -148,7 +148,7 @@ class ProcurementStakeholderAdmin(admin.ModelAdmin):
         'primary_contact', 'assigned_at'
     ]
     search_fields = [
-        'user__username', 'user__name', 'user__email',
+        'user__username', 'user__employee_profile__name', 'user__email',
         'procurement_plan__policy_number', 'procurement_plan__project_name'
     ]
     readonly_fields = ['assigned_at', 'created_at', 'updated_at', 'last_activity_date']

@@ -8,6 +8,8 @@ import { apiClient } from "@/api/client";
 import { cn } from "@/lib/utils";
 import { getRoleConfig } from "@/config/committeeRoleConfig";
 import type { Committee } from "@/api/committees";
+import PhaseIndicator from "./PhaseIndicator";
+import FinalizationSection from "./FinalizationSection";
 import {
   Building2,
   Clock,
@@ -181,6 +183,7 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
 
   return (
     <div className="flex flex-col bg-white overflow-hidden rounded-xl border border-slate-200 shadow-sm">
+      {/* Header */}
       <div className="px-4 py-5 border-b bg-white shrink-0 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
@@ -199,97 +202,123 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
         </div>
       </div>
 
+      {/* Content */}
       <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-6 bg-slate-50/10 sm:p-6 lg:p-8 lg:space-y-8">
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-12 xl:gap-8">
-          <div className="space-y-6 xl:col-span-8 xl:space-y-8">
-            <Card className="shadow-sm border-slate-200 rounded-lg">
-              <CardContent className="p-4 flex items-center gap-4">
-                <div className="p-2.5 bg-blue-50 rounded-lg text-[hsl(209,100%,32%)]">
-                  <Building2 className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-bold text-slate-400 tracking-tight mb-0.5">Office / Department</p>
-                  <p className="text-sm font-bold text-slate-700 leading-tight">{committee.office_name || "Head Office"}</p>
-                </div>
-              </CardContent>
-            </Card>
+        {/* Phase Indicator */}
+        {committee.phases && committee.phases.length > 0 && (
+          <PhaseIndicator
+            phases={committee.phases.map((phase: any) => ({
+              phase: phase.phase,
+              name: phase.name,
+              status: phase.completed ? `Completed 5/15/2026` : phase.phase === 'initialization' ? 'In Progress' : 'Submit report',
+              visible: phase.visible !== false
+            }))}
+            initializationComplete={committee.initialization_phase_completed}
+          />
+        )}
 
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-slate-700">
-                <Target className="h-5 w-5 text-[hsl(209,100%,32%)]" />
-                <h3 className="text-sm font-bold tracking-tight">Description (Purpose)</h3>
-              </div>
-              <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-1 h-full bg-[hsl(209,100%,32%)]" />
-                <p className="text-slate-600 leading-relaxed text-sm font-medium font-serif italic">
-                  &ldquo;{committee.purpose || "No specific purpose statement provided."}&rdquo;
-                </p>
-              </div>
+        {/* Phase 1 - Initialization */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Phase 1</h3>
+              <p className="text-sm font-semibold text-slate-700 mt-1">Initialization</p>
             </div>
+            <Button variant="outline" size="sm">Reopen</Button>
+          </div>
 
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Users className="h-5 w-5 text-[hsl(209,100%,32%)]" />
-                <h3 className="text-sm font-bold tracking-tight text-slate-800">
-                  Committee Members ({members.length})
-                </h3>
+          {/* Office Card */}
+          <Card className="shadow-sm border-slate-200 rounded-lg">
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="p-2.5 bg-blue-50 rounded-lg text-[hsl(209,100%,32%)]">
+                <Building2 className="h-5 w-5" />
               </div>
-
-              <div className="space-y-2.5">
-                {sortedMembers.length > 0 ? (
-                  sortedMembers.map((member: any, idx: number) => {
-                    const roleConfig = getRoleConfig(member.role || "member");
-                    return (
-                      <div
-                        key={`${member.employeeId || member.id || idx}`}
-                        className="bg-white p-3.5 rounded-lg border border-slate-100 shadow-sm transition-all hover:border-[hsl(209,100%,32%)]"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="shrink-0 w-11 h-11 rounded-lg bg-blue-50/50 flex items-center justify-center border border-blue-100/50">
-                            <User className="h-5.5 w-5.5 text-[hsl(209,100%,32%)]" />
-                          </div>
-
-                          <div className="flex-1 min-w-0 space-y-1.5">
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <h4 className="font-semibold text-slate-800 text-sm leading-tight capitalize tracking-tight">
-                                {member.name || "Unnamed Member"}
-                              </h4>
-                              <Badge className={cn("text-[9px] px-2 py-0.5 font-bold border-0 shadow-none h-5 rounded-full", roleConfig.badgeClasses)}>
-                                <span className="capitalize">{roleConfig.label.toLowerCase()}</span>
-                              </Badge>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-y-1 gap-x-6 text-[11px] font-medium text-slate-400">
-                              <div className="flex items-center gap-1.5">
-                                <Fingerprint className="h-3.5 w-3.5 text-slate-300" />
-                                <span>{member.employeeId || member.id || "N/A"}</span>
-                              </div>
-                              {member.email && (
-                                <div className="flex items-center gap-1.5">
-                                  <Mail className="h-3.5 w-3.5 text-slate-300" />
-                                  <span className="break-all">{member.email}</span>
-                                </div>
-                              )}
-                              {(member.phone || member.mobile || member.phone_number) && (
-                                <div className="flex items-center gap-1.5">
-                                  <Phone className="h-3.5 w-3.5 text-slate-300" />
-                                  <span>{member.phone || member.mobile || member.phone_number}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="text-slate-400 text-sm font-medium">No members have been assigned to this committee.</p>
-                )}
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold text-slate-400 tracking-tight mb-0.5">Office / Department</p>
+                <p className="text-sm font-bold text-slate-700 leading-tight">{committee.office_name || "Head Office"}</p>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Purpose Section */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-slate-700">
+              <Target className="h-5 w-5 text-[hsl(209,100%,32%)]" />
+              <h3 className="text-sm font-bold tracking-tight">Description (Purpose)</h3>
+            </div>
+            <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full bg-[hsl(209,100%,32%)]" />
+              <p className="text-slate-600 leading-relaxed text-sm font-medium font-serif italic">
+                &ldquo;{committee.purpose || "No specific purpose statement provided."}&rdquo;
+              </p>
             </div>
           </div>
 
-          <div className="space-y-6 xl:col-span-4">
+          {/* Members Section */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <Users className="h-5 w-5 text-[hsl(209,100%,32%)]" />
+              <h3 className="text-sm font-bold tracking-tight text-slate-800">
+                Committee Members ({members.length})
+              </h3>
+            </div>
+
+            <div className="space-y-2.5">
+              {sortedMembers.length > 0 ? (
+                sortedMembers.map((member: any, idx: number) => {
+                  const roleConfig = getRoleConfig(member.role || "member");
+                  return (
+                    <div
+                      key={`${member.employeeId || member.id || idx}`}
+                      className="bg-white p-3.5 rounded-lg border border-slate-100 shadow-sm transition-all hover:border-[hsl(209,100%,32%)]"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="shrink-0 w-11 h-11 rounded-lg bg-blue-50/50 flex items-center justify-center border border-blue-100/50">
+                          <User className="h-5.5 w-5.5 text-[hsl(209,100%,32%)]" />
+                        </div>
+
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <h4 className="font-semibold text-slate-800 text-sm leading-tight capitalize tracking-tight">
+                              {member.name || "Unnamed Member"}
+                            </h4>
+                            <Badge className={cn("text-[9px] px-2 py-0.5 font-bold border-0 shadow-none h-5 rounded-full", roleConfig.badgeClasses)}>
+                              <span className="capitalize">{roleConfig.label.toLowerCase()}</span>
+                            </Badge>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-y-1 gap-x-6 text-[11px] font-medium text-slate-400">
+                            <div className="flex items-center gap-1.5">
+                              <Fingerprint className="h-3.5 w-3.5 text-slate-300" />
+                              <span>{member.employeeId || member.id || "N/A"}</span>
+                            </div>
+                            {member.email && (
+                              <div className="flex items-center gap-1.5">
+                                <Mail className="h-3.5 w-3.5 text-slate-300" />
+                                <span className="break-all">{member.email}</span>
+                              </div>
+                            )}
+                            {(member.phone || member.mobile || member.phone_number) && (
+                              <div className="flex items-center gap-1.5">
+                                <Phone className="h-3.5 w-3.5 text-slate-300" />
+                                <span>{member.phone || member.mobile || member.phone_number}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-slate-400 text-sm font-medium">No members have been assigned to this committee.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Dates and Documents Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Dates Card */}
             <Card className="shadow-sm border-slate-200 rounded-lg overflow-hidden">
               <div className="bg-[hsl(209,100%,32%)] px-4 py-2.5 border-b border-white/10 flex items-center gap-2">
                 <Clock className="h-4 w-4 text-white" />
@@ -331,6 +360,7 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
               </CardContent>
             </Card>
 
+            {/* Documents Card */}
             <Card className="shadow-sm border-slate-200 rounded-lg overflow-hidden">
               <div className="bg-[hsl(209,100%,32%)] px-4 py-2.5 border-b border-white/10 flex items-center gap-2">
                 <FileText className="h-4 w-4 text-white" />
@@ -376,8 +406,23 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
             </Card>
           </div>
         </div>
+
+        {/* Phase 2 - Finalization */}
+        {committee.initialization_phase_completed && (
+          <FinalizationSection
+            committeeId={id}
+            isInitializationComplete={committee.initialization_phase_completed}
+            onReportSubmit={() => {
+              toast({
+                title: "Success",
+                description: "Report submitted successfully",
+              });
+            }}
+          />
+        )}
       </div>
 
+      {/* Footer */}
       <div className="flex shrink-0 justify-end border-t bg-slate-50/50 px-4 py-4 sm:px-6 lg:px-8">
         <Button
           variant="default"

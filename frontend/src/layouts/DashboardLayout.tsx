@@ -32,6 +32,20 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         {/* Navigation */}
         <nav className="flex gap-2 overflow-x-auto px-3 py-3 md:flex-1 md:flex-col md:space-y-2 md:overflow-visible md:px-3 md:py-4">
           <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              `flex shrink-0 items-center gap-3 rounded-md px-3 py-2 transition-colors ${
+                isActive
+                  ? "bg-primary text-primary-foreground font-medium"
+                  : "hover:bg-accent hover:text-accent-foreground font-medium text-sidebar-foreground"
+              }`
+            }
+          >
+            <LayoutDashboard size={20} />
+            <span>Dashboard</span>
+          </NavLink>
+          <NavLink
             to="/offices"
             className={({ isActive }) =>
               `flex shrink-0 items-center gap-3 rounded-md px-3 py-2 transition-colors ${

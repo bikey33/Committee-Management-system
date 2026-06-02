@@ -168,7 +168,7 @@ class ProcurementStakeholder(models.Model):
     
     class Meta:
         unique_together = ('procurement_plan', 'user', 'role')
-        ordering = ['contact_priority', 'role', 'user__name']
+        ordering = ['contact_priority', 'role', 'user__employee_profile__name']
         verbose_name = "Procurement Stakeholder"
         verbose_name_plural = "Procurement Stakeholders"
         indexes = [
@@ -179,7 +179,9 @@ class ProcurementStakeholder(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.user.name or self.user.username} - {self.get_role_display()} ({self.procurement_plan.policy_number})"
+        profile = getattr(self.user, 'employee_profile', None)
+        display_name = getattr(profile, 'name', None) or self.user.username
+        return f"{display_name} - {self.get_role_display()} ({self.procurement_plan.policy_number})"
     
     def save(self, *args, **kwargs):
         # Update last activity when status changes to active

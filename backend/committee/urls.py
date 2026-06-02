@@ -9,7 +9,8 @@ from .views import (
     PreviewFormationLetterView,
     committee_details_with_type, GetCommitteesByTypeView, CommitteeRolesView,
     CommitteeRolesCRUDView, CommitteeRoleDetailView, ReviewCommitteeDefaultMembersView,
-    ReviewCommitteeDefaultMembersDeleteView
+    ReviewCommitteeDefaultMembersDeleteView, CommitteePhaseCheckpointView,
+    CommitteePhaseCheckpointDetailView, CommitteePhaseTransitionView
 )
 
 urlpatterns = [
@@ -35,4 +36,9 @@ urlpatterns = [
          GetCommitteesByProcurementPlanView.as_view(), name='committees-by-procurement-plan'),
     path('review-defaults/', ReviewCommitteeDefaultMembersView.as_view(), name='review-committee-defaults'),
     path('review-defaults/delete/', ReviewCommitteeDefaultMembersDeleteView.as_view(), name='review-committee-defaults-delete'),
+    
+    # Phase and checkpoint management
+    path('committees/<int:committee_id>/checkpoints/', CommitteePhaseCheckpointView.as_view(), name='committee-checkpoints'),
+    path('checkpoints/<int:checkpoint_id>/', CommitteePhaseCheckpointDetailView.as_view(), name='checkpoint-detail'),
+    path('committees/<int:committee_id>/phase-transition/', CommitteePhaseTransitionView.as_view(), name='phase-transition'),
 ]

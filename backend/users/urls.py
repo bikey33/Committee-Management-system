@@ -8,8 +8,8 @@ from .views import (
     CreateUserFromEmployeeView, EmployeeToUserPreviewView, AvailableEmployeesForUserCreationView,
     OTPVerifyView, OTPResendView, AvailablePermissionsView, PermissionAuditLogListView,
     EffectivePermissionsView, ChangePasswordView, AdminResetPasswordView,
+    DirectorateListView, DirectorateCreateView, DirectorateUpdateView, DirectorateDeleteView,
     OfficeListView, OfficeCreateView, OfficeUpdateView, OfficeDeleteView,
-    DepartmentListView, DepartmentCreateView, DepartmentUpdateView, DepartmentDeleteView,
     PositionListView, WorkingOfficeListView,
 )
 
@@ -46,13 +46,13 @@ urlpatterns = [
     
     path('employees/preview-user/<str:employee_id>/', EmployeeToUserPreviewView.as_view(), name='employee-to-user-preview'),
     path('employees/available-for-users/', AvailableEmployeesForUserCreationView.as_view(), name='available-employees-for-users'),
+    path('directorates/', DirectorateListView.as_view(), name='directorate-list'),
+    path('directorates/create/', DirectorateCreateView.as_view(), name='directorate-create'),
+    path('directorates/<int:pk>/', DirectorateUpdateView.as_view(), name='directorate-update'),
+    path('directorates/<int:pk>/delete/', DirectorateDeleteView.as_view(), name='directorate-delete'),
     path('offices/', OfficeListView.as_view(), name='office-list'),
     path('offices/create/', OfficeCreateView.as_view(), name='office-create'),
     path('offices/<int:pk>/', OfficeUpdateView.as_view(), name='office-update'),
     path('offices/<int:pk>/delete/', OfficeDeleteView.as_view(), name='office-delete'),
-    path('departments/', DepartmentListView.as_view(), name='department-list'),
-    path('departments/create/', DepartmentCreateView.as_view(), name='department-create'),
-    path('departments/<int:pk>/', DepartmentUpdateView.as_view(), name='department-update'),
-    path('departments/<int:pk>/delete/', DepartmentDeleteView.as_view(), name='department-delete'),
     path('working-offices/', WorkingOfficeListView.as_view(), name='working-office-list'),
 ]

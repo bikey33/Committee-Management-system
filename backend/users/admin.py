@@ -1,7 +1,7 @@
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Role, Permission, RolePermission, EmployeeDetail, Office, Department
+from .models import CustomUser, Role, Permission, RolePermission, EmployeeDetail, Directorate, Office
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,13 @@ class RoleAdmin(admin.ModelAdmin):
     user_count.short_description = 'Users'
 
 
+class EmployeeDetailInline(admin.StackedInline):
+    model = EmployeeDetail
+    fk_name = 'user'
+    can_delete = False
+    extra = 0
+
+
 # ---------------------------------------------------------------------------
 # CustomUser
 # ---------------------------------------------------------------------------
@@ -46,14 +53,15 @@ class RoleAdmin(admin.ModelAdmin):
 class CustomUserAdmin(UserAdmin):
     list_display = (
         'employee_id', 'username', 'email',
-        'user_role', 'department', 'is_active', 'is_superuser', 'last_login',
+        'user_role', 'employee_department', 'is_active', 'is_superuser', 'last_login',
     )
-    search_fields = ('employee_id', 'username', 'email', 'name')
+    search_fields = ('employee_id', 'username', 'email', 'employee_profile__name')
     list_filter = ('user_role', 'is_active', 'is_superuser')
+    inlines = [EmployeeDetailInline]
 
     fieldsets = (
         (None, {'fields': ('employee_id', 'password')}),
-        ('Personal Info', {'fields': ('username', 'name', 'email', 'phone', 'department', 'designation')}),
+        ('Account Info', {'fields': ('username', 'email', 'office')}),
         ('Role', {'fields': ('user_role',)}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
         ('Important Dates', {'fields': ('last_login', 'date_joined')}),
@@ -64,22 +72,32 @@ class CustomUserAdmin(UserAdmin):
             'classes': ('wide',),
             'fields': (
                 'employee_id', 'username', 'password1', 'password2',
-                'email', 'phone', 'department', 'user_role',
+                'email', 'office', 'user_role',
             ),
         }),
     )
 
+    def employee_department(self, obj):
+        if getattr(obj, 'employee_profile', None):
+            return obj.employee_profile.department
+        return None
+    employee_department.short_description = 'Department'
+
 
 @admin.register(EmployeeDetail)
 class EmployeeDetailAdmin(admin.ModelAdmin):
-    list_display = ('employee_id', 'name', 'email', 'position', 'level')
-    search_fields = ('employee_id', 'name', 'email')
+    list_display = ('employee_id', 'name', 'user_email', 'position', 'level')
+    search_fields = ('employee_id', 'name', 'user__email')
+
+    def user_email(self, obj):
+        return obj.user.email
+    user_email.short_description = 'Email'
 
 
-@admin.register(Department)
-class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'office_count')
-    search_fields = ('name', 'code')
+@admin.register(Directorate)
+class DirectorateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'office_count')
+    search_fields = ('name',)
 
     def office_count(self, obj):
         return obj.offices.count()
@@ -88,6 +106,6 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 @admin.register(Office)
 class OfficeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'department', 'parent', 'created_at')
-    search_fields = ('name', 'code', 'department__name')
-    list_filter = ('department',)
+    list_display = ('name', 'code', 'directorate', 'created_at')
+    search_fields = ('name', 'code', 'directorate__name')
+    list_filter = ('directorate',)

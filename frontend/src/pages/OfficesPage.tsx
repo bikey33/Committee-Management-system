@@ -23,18 +23,17 @@ export function OfficesPage() {
   const queryClient = useQueryClient();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedOffice, setSelectedOffice] = useState<Office | null>(null);
-  const [departmentName, setDepartmentName] = useState("");
-  const [departmentCode, setDepartmentCode] = useState("");
-  const [departmentDescription, setDepartmentDescription] = useState("");
+  const [directorateName, setDirectorateName] = useState("");
+  const [directorateDescription, setDirectorateDescription] = useState("");
 
   const { data: offices, isLoading, isError } = useQuery({
     queryKey: ["offices"],
     queryFn: officesService.getAll,
   });
 
-  const { data: departments = [], isLoading: departmentsLoading } = useQuery({
-    queryKey: ["departments"],
-    queryFn: officesService.getDepartments,
+  const { data: directorates = [], isLoading: directoratesLoading } = useQuery({
+    queryKey: ["directorates"],
+    queryFn: officesService.getDirectorates,
   });
 
   const deleteMutation = useMutation({
@@ -48,30 +47,29 @@ export function OfficesPage() {
     },
   });
 
-  const createDepartmentMutation = useMutation({
-    mutationFn: (data: { name: string; code: string; description: string }) => officesService.createDepartment(data),
+  const createDirectorateMutation = useMutation({
+    mutationFn: (data: { name: string; description: string }) => officesService.createDirectorate(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["departments"] });
+      queryClient.invalidateQueries({ queryKey: ["directorates"] });
       queryClient.invalidateQueries({ queryKey: ["offices"] });
-      toast.success("Department created successfully");
-      setDepartmentName("");
-      setDepartmentCode("");
-      setDepartmentDescription("");
+      toast.success("Directorate created successfully");
+      setDirectorateName("");
+      setDirectorateDescription("");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.detail || error.response?.data?.error || "Failed to create department");
+      toast.error(error.response?.data?.detail || error.response?.data?.error || "Failed to create directorate");
     },
   });
 
-  const deleteDepartmentMutation = useMutation({
-    mutationFn: (id: number) => officesService.deleteDepartment(id),
+  const deleteDirectorateMutation = useMutation({
+    mutationFn: (id: number) => officesService.deleteDirectorate(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["departments"] });
+      queryClient.invalidateQueries({ queryKey: ["directorates"] });
       queryClient.invalidateQueries({ queryKey: ["offices"] });
-      toast.success("Department deleted successfully");
+      toast.success("Directorate deleted successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.detail || error.response?.data?.error || "Failed to delete department");
+      toast.error(error.response?.data?.detail || error.response?.data?.error || "Failed to delete directorate");
     },
   });
 
@@ -91,17 +89,16 @@ export function OfficesPage() {
     }
   };
 
-  const formatDepartment = (office: Office) => {
-    return office.department_details?.name || office.department_name || "None";
+  const formatDirectorate = (office: Office) => {
+    return office.directorate_details?.name || office.directorate_name || "None";
   };
 
-  const handleCreateDepartment = (e: React.FormEvent) => {
+  const handleCreateDirectorate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!departmentName.trim() || !departmentCode.trim()) return;
-    createDepartmentMutation.mutate({
-      name: departmentName.trim(),
-      code: departmentCode.trim(),
-      description: departmentDescription.trim(),
+    if (!directorateName.trim()) return;
+    createDirectorateMutation.mutate({
+      name: directorateName.trim(),
+      description: directorateDescription.trim(),
     });
   };
 
@@ -114,7 +111,7 @@ export function OfficesPage() {
             <Building2 size={28} className="text-primary" />
             Offices
           </h1>
-          <p className="text-muted-foreground mt-1">Manage organizational offices and departments</p>
+          <p className="text-muted-foreground mt-1">Manage organizational offices and directorates</p>
         </div>
         <Button 
           onClick={handleCreateNew}
@@ -127,53 +124,51 @@ export function OfficesPage() {
 
       <Card className="overflow-hidden border-t-4 border-t-[hsl(209,100%,32%)] shadow-sm">
         <CardHeader className="border-b border-slate-50 pb-3">
-          <CardTitle className="text-sm font-bold tracking-tight text-[hsl(209,100%,32%)]">Departments</CardTitle>
+          <CardTitle className="text-sm font-bold tracking-tight text-[hsl(209,100%,32%)]">Directorates</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 pt-4">
-          <form onSubmit={handleCreateDepartment} className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} placeholder="Department name" />
-            <Input value={departmentCode} onChange={(e) => setDepartmentCode(e.target.value)} placeholder="Code" />
-            <Button type="submit" disabled={createDepartmentMutation.isPending || !departmentName.trim() || !departmentCode.trim()} className="w-full">
-              {createDepartmentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
-              Add Department
+          <form onSubmit={handleCreateDirectorate} className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Input value={directorateName} onChange={(e) => setDirectorateName(e.target.value)} placeholder="Directorate name" />
+            <Button type="submit" disabled={createDirectorateMutation.isPending || !directorateName.trim()} className="w-full">
+              {createDirectorateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
+              Add Directorate
             </Button>
             <Textarea
-              value={departmentDescription}
-              onChange={(e) => setDepartmentDescription(e.target.value)}
+              value={directorateDescription}
+              onChange={(e) => setDirectorateDescription(e.target.value)}
               placeholder="Optional description"
               className="md:col-span-3 min-h-[90px]"
             />
           </form>
 
           <div className="space-y-2">
-            {departmentsLoading ? (
+            {directoratesLoading ? (
               <div className="flex items-center justify-center py-6 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
-            ) : departments.length > 0 ? (
-              departments.map((department: any) => (
-                <div key={department.id} className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+            ) : directorates.length > 0 ? (
+              directorates.map((directorate: any) => (
+                <div key={directorate.id} className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-slate-900">{department.name}</p>
-                      <Badge variant="outline" className="text-xs">{department.code}</Badge>
-                      <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">{department.office_count || 0} offices</Badge>
+                      <p className="font-medium text-slate-900">{directorate.name}</p>
+                      <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">{directorate.office_count || 0} offices</Badge>
                     </div>
-                    {department.description ? <p className="mt-1 text-sm text-slate-500">{department.description}</p> : null}
+                    {directorate.description ? <p className="mt-1 text-sm text-slate-500">{directorate.description}</p> : null}
                   </div>
                   <Button
                     type="button"
                     variant="ghost"
                     className="self-start text-destructive hover:text-destructive hover:bg-destructive/5 sm:self-auto"
-                    disabled={deleteDepartmentMutation.isPending}
-                    onClick={() => deleteDepartmentMutation.mutate(department.id)}
+                    disabled={deleteDirectorateMutation.isPending}
+                    onClick={() => deleteDirectorateMutation.mutate(directorate.id)}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))
             ) : (
-              <p className="py-4 text-center text-sm text-muted-foreground">No departments yet.</p>
+              <p className="py-4 text-center text-sm text-muted-foreground">No directorates yet.</p>
             )}
           </div>
         </CardContent>
@@ -187,7 +182,7 @@ export function OfficesPage() {
             <TableRow>
               <TableHead className="w-[300px]">Office Name</TableHead>
               <TableHead>Code</TableHead>
-              <TableHead>Departments</TableHead>
+              <TableHead>Directorate</TableHead>
               <TableHead className="text-right pr-6">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -222,7 +217,7 @@ export function OfficesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDepartment(office)}
+                    {formatDirectorate(office)}
                   </TableCell>
                   <TableCell className="text-right pr-6">
                     <div className="flex items-center justify-end gap-3">

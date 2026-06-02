@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .permissions import CommitteePermission
-from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember
+from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember, CommitteePhaseCheckpoint
 from procurement.models import ProcurementDocument
 from django.db.utils import OperationalError, ProgrammingError
 from .serializers import CommitteeSerializer
@@ -22,7 +22,7 @@ import logging
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.response import Response
@@ -656,19 +656,25 @@ class DownloadFormationLetterView(APIView):
                     {"status": "error", "message": "No formation letter available"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            file_path = os.path.join(settings.MEDIA_ROOT, committee.formation_letter.name)
+
+            storage = committee.formation_letter.storage
+            file_name = committee.formation_letter.name
+            if not storage.exists(file_name):
+                logger.error(f"Formation letter file not found for committee {committee_id}: {file_name}")
+                return Response(
+                    {"status": "error", "message": "Formation letter file not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
             import mimetypes
-            content_type, _ = mimetypes.guess_type(committee.formation_letter.name)
+            content_type, _ = mimetypes.guess_type(file_name)
             if not content_type:
                 content_type = 'application/octet-stream'
 
-            with open(file_path, 'rb') as f:
-                response = HttpResponse(f.read(), content_type=content_type)
-                response[
-                    'Content-Disposition'] = f'attachment; filename="{committee.formation_letter.name.split("/")[-1]}"'
-                logger.debug(f"Formation letter downloaded for committee {committee_id}")
-                return response
+            response = FileResponse(storage.open(file_name, 'rb'), content_type=content_type)
+            response['Content-Disposition'] = f'attachment; filename="{file_name.split("/")[-1]}"'
+            logger.debug(f"Formation letter downloaded for committee {committee_id}")
+            return response
         except ObjectDoesNotExist:
             logger.error(f"Committee {committee_id} not found")
             return Response(
@@ -696,19 +702,26 @@ class PreviewFormationLetterView(APIView):
                     {"status": "error", "message": "No formation letter available"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            file_path = os.path.join(settings.MEDIA_ROOT, committee.formation_letter.name)
+
+            storage = committee.formation_letter.storage
+            file_name = committee.formation_letter.name
+            if not storage.exists(file_name):
+                logger.error(f"Formation letter file not found for committee {committee_id}: {file_name}")
+                return Response(
+                    {"status": "error", "message": "Formation letter file not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
             import mimetypes
-            content_type, _ = mimetypes.guess_type(committee.formation_letter.name)
+            content_type, _ = mimetypes.guess_type(file_name)
             if not content_type:
                 content_type = 'application/octet-stream'
 
-            with open(file_path, 'rb') as f:
-                response = HttpResponse(f.read(), content_type=content_type)
-                # Content-Disposition 'inline' allows previewing in browsers
-                response['Content-Disposition'] = f'inline; filename="{committee.formation_letter.name.split("/")[-1]}"'
-                logger.debug(f"Formation letter previewed for committee {committee_id}")
-                return response
+            response = FileResponse(storage.open(file_name, 'rb'), content_type=content_type)
+            # Content-Disposition 'inline' allows previewing in browsers
+            response['Content-Disposition'] = f'inline; filename="{file_name.split("/")[-1]}"'
+            logger.debug(f"Formation letter previewed for committee {committee_id}")
+            return response
         except ObjectDoesNotExist:
             logger.error(f"Committee {committee_id} not found")
             return Response(
@@ -933,3 +946,200 @@ class ReviewCommitteeDefaultMembersDeleteView(APIView):
             return Response({'status': 'success', 'message': 'Default member removed.'}, status=status.HTTP_200_OK)
         except ReviewCommitteeDefaultMember.DoesNotExist:
             return Response({'error': 'Default member not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class CommitteePhaseCheckpointView(APIView):
+    """Manage committee phase checkpoints"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, committee_id):
+        """Get all checkpoints for a committee"""
+        try:
+            committee = Committee.objects.get(id=committee_id)
+            checkpoints = CommitteePhaseCheckpoint.objects.filter(committee=committee).order_by('phase', 'order')
+            
+            from .serializers import CommitteePhaseCheckpointSerializer
+            serializer = CommitteePhaseCheckpointSerializer(checkpoints, many=True)
+            
+            return Response({
+                'status': 'success',
+                'data': {
+                    'committee_id': committee.id,
+                    'checkpoints': serializer.data
+                }
+            }, status=status.HTTP_200_OK)
+        except Committee.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'Committee not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Error fetching checkpoints: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': 'An error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def post(self, request, committee_id):
+        """Create checkpoints for a committee (initialization of phases)"""
+        try:
+            committee = Committee.objects.get(id=committee_id)
+            
+            # Create default checkpoints for initialization phase
+            init_checkpoints = [
+                {
+                    'phase': 'initialization',
+                    'name': 'Committee Formation',
+                    'description': 'Committee has been properly formed with all members assigned',
+                    'order': 1
+                },
+                {
+                    'phase': 'initialization',
+                    'name': 'First Meeting',
+                    'description': 'Committee conducted its first official meeting',
+                    'order': 2
+                },
+                {
+                    'phase': 'initialization',
+                    'name': 'Specification Review',
+                    'description': 'Tender specifications have been reviewed and finalized',
+                    'order': 3
+                }
+            ]
+            
+            # Create default checkpoints for finalization phase
+            final_checkpoints = [
+                {
+                    'phase': 'finalization',
+                    'name': 'Evaluation Complete',
+                    'description': 'Evaluation process has been completed',
+                    'order': 1
+                },
+                {
+                    'phase': 'finalization',
+                    'name': 'Report Generation',
+                    'description': 'Committee report has been generated',
+                    'order': 2
+                },
+                {
+                    'phase': 'finalization',
+                    'name': 'Final Approval',
+                    'description': 'Final recommendations have been approved',
+                    'order': 3
+                }
+            ]
+            
+            all_checkpoints = init_checkpoints + final_checkpoints
+            created_checkpoints = []
+            
+            for cp_data in all_checkpoints:
+                checkpoint, created = CommitteePhaseCheckpoint.objects.get_or_create(
+                    committee=committee,
+                    phase=cp_data['phase'],
+                    order=cp_data['order'],
+                    defaults={
+                        'name': cp_data['name'],
+                        'description': cp_data['description'],
+                    }
+                )
+                if created:
+                    created_checkpoints.append(checkpoint)
+            
+            from .serializers import CommitteePhaseCheckpointSerializer
+            serializer = CommitteePhaseCheckpointSerializer(created_checkpoints, many=True)
+            
+            return Response({
+                'status': 'success',
+                'message': f'{len(created_checkpoints)} checkpoints created',
+                'data': {
+                    'checkpoints': serializer.data
+                }
+            }, status=status.HTTP_201_CREATED)
+        except Committee.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'Committee not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Error creating checkpoints: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': 'An error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CommitteePhaseCheckpointDetailView(APIView):
+    """Mark checkpoints as complete"""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, checkpoint_id):
+        """Mark a checkpoint as complete"""
+        try:
+            checkpoint = CommitteePhaseCheckpoint.objects.get(id=checkpoint_id)
+            
+            # Mark checkpoint as complete
+            checkpoint.mark_completed(user=request.user)
+            
+            from .serializers import CommitteePhaseCheckpointSerializer
+            serializer = CommitteePhaseCheckpointSerializer(checkpoint)
+            
+            return Response({
+                'status': 'success',
+                'message': 'Checkpoint marked as complete',
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
+        except CommitteePhaseCheckpoint.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'Checkpoint not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Error updating checkpoint: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': 'An error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CommitteePhaseTransitionView(APIView):
+    """Handle phase transitions"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, committee_id):
+        """Move committee to next phase"""
+        try:
+            committee = Committee.objects.get(id=committee_id)
+            
+            # Check if initialization is complete before allowing finalization
+            if committee.current_phase == 'initialization' and not committee.initialization_phase_completed:
+                return Response({
+                    'status': 'error',
+                    'message': 'Cannot move to finalization phase until all initialization checkpoints are complete'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Transition to next phase
+            if committee.current_phase == 'initialization':
+                committee.current_phase = 'finalization'
+                committee.save()
+                return Response({
+                    'status': 'success',
+                    'message': 'Committee moved to finalization phase',
+                    'data': {'current_phase': committee.current_phase}
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'status': 'error',
+                    'message': 'Committee has already reached the final phase'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Committee.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'Committee not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Error transitioning phase: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': 'An error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

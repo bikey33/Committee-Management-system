@@ -187,7 +187,8 @@ class BaseProcurementPermission(permissions.BasePermission):
             return False
             
         # Same department - allow access
-        if user.department == procurement_plan.department:
+        user_dept = getattr(getattr(user, 'employee_profile', None), 'department', None)
+        if user_dept == procurement_plan.department:
             return True
             
         # Check if user has cross-department permissions
@@ -429,7 +430,8 @@ class ProcurementPlanPermission(BaseProcurementPermission):
             return True
             
         # Department members can view plans in their department
-        if user.department == procurement_plan.department:
+        user_dept = getattr(getattr(user, 'employee_profile', None), 'department', None)
+        if user_dept == procurement_plan.department:
             return True
             
         return False

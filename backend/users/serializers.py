@@ -6,7 +6,7 @@ import secrets
 import string
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Office, Department, Position, WorkingOffice
+from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Directorate, Office, Department, Position, WorkingOffice
 
 class PositionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def get_employee_profile(user):
+    return getattr(user, 'employee_profile', None)
+
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     employee_id = serializers.CharField()  # Input field for employee_id or email
 
@@ -59,7 +63,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         # Check if OTP is enabled for this user
         if user.otp_enabled:
-            phone_number = getattr(user, 'phone', None)
+            profile = get_employee_profile(user)
+            phone_number = getattr(profile, 'phone', None) or getattr(profile, 'mno', None)
             if not phone_number:
                 logger.error(f"OTP enabled but no phone number for user {user.employee_id}")
                 raise serializers.ValidationError(
@@ -132,20 +137,24 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'description': user.user_role.description,
                 'permissions': user.get_permission_codenames(),
             } if user.user_role_id else None,
-            'department': user.department,
-            'phoneNumber': user.phone,
-            'designation': user.designation,
+            'department': getattr(get_employee_profile(user), 'department', None),
+            'phoneNumber': getattr(get_employee_profile(user), 'phone', None) or getattr(get_employee_profile(user), 'mno', None),
+            'designation': getattr(get_employee_profile(user), 'designation', None),
             'isActive': user.is_active,
             'otpEnabled': user.otp_enabled,
             'office': {
                 'id': user.office.id,
                 'name': user.office.name,
                 'code': user.office.code,
+                'directorate': {
+                    'id': user.office.directorate.id,
+                    'name': user.office.directorate.name,
+                } if getattr(user.office, 'directorate', None) else None,
             } if getattr(user, 'office', None) else None,
-            'working_office': {
-                'id': user.working_office.id,
-                'name': user.working_office.name_of_office,
-            } if getattr(user, 'working_office', None) else None,
+            'working_office': None,
+            'department': getattr(get_employee_profile(user), 'department', None),
+            'phoneNumber': getattr(get_employee_profile(user), 'phone', None) or getattr(get_employee_profile(user), 'mno', None),
+            'designation': getattr(get_employee_profile(user), 'designation', None),
         }
         return data
 
@@ -153,7 +162,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         """Combine first_name and last_name, fallback to name field"""
         if user.first_name or user.last_name:
             return f"{user.first_name} {user.last_name}".strip()
-        return user.name or ''
+        profile = getattr(user, 'employee_profile', None)
+        return getattr(profile, 'name', '') or ''
 
 
 
@@ -167,35 +177,56 @@ class PermissionSerializer(serializers.ModelSerializer):
         fields = ['id', 'codename', 'name', 'group', 'description', 'is_active']
 
 
+class DirectorateSerializer(serializers.ModelSerializer):
+    office_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Directorate
+        fields = ['id', 'name', 'code', 'description', 'office_count', 'created_at', 'updated_at']
+
+    def get_office_count(self, obj):
+        return obj.offices.count()
+
+
 class OfficeSerializer(serializers.ModelSerializer):
-    department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all(), required=False, allow_null=True)
-    department_details = serializers.SerializerMethodField()
-    department_name = serializers.SerializerMethodField()
+    directorate = serializers.PrimaryKeyRelatedField(queryset=Directorate.objects.all(), required=False, allow_null=True)
+    directorate_details = serializers.SerializerMethodField()
+    directorate_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Office
-        fields = ['id', 'name', 'code', 'departments', 'department', 'department_details', 'department_name', 'parent']
+        fields = ['id', 'name', 'code', 'directorate', 'directorate_details', 'directorate_name', 'created_at', 'updated_at']
 
-    def get_department_details(self, obj):
-        if not obj.department:
+    def get_directorate_details(self, obj):
+        if not obj.directorate:
             return None
         return {
-            'id': obj.department.id,
-            'name': obj.department.name,
-            'code': obj.department.code,
-            'description': obj.department.description,
+            'id': obj.directorate.id,
+            'name': obj.directorate.name,
+            'description': obj.directorate.description,
         }
 
-    def get_department_name(self, obj):
-        return obj.department_name
+    def get_directorate_name(self, obj):
+        return obj.directorate_name
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
+    directorate = serializers.PrimaryKeyRelatedField(queryset=Directorate.objects.all(), required=False, allow_null=True)
+    directorate_details = serializers.SerializerMethodField()
     office_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Department
-        fields = ['id', 'name', 'code', 'description', 'office_count', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'code', 'directorate', 'directorate_details', 'description', 'office_count', 'created_at', 'updated_at']
+
+    def get_directorate_details(self, obj):
+        if not obj.directorate:
+            return None
+        return {
+            'id': obj.directorate.id,
+            'name': obj.directorate.name,
+            'description': obj.directorate.description,
+        }
 
     def get_office_count(self, obj):
         return obj.offices.count()
@@ -245,15 +276,15 @@ class UserSerializer(serializers.ModelSerializer):
     _id         = serializers.CharField(source='employee_id')
     employeeId  = serializers.CharField(source='employee_id')
     name        = serializers.SerializerMethodField()
-    phoneNumber = serializers.CharField(source='phone', allow_null=True, allow_blank=True, required=False)
+    phoneNumber = serializers.SerializerMethodField()
     isActive    = serializers.BooleanField(source='is_active', required=False)
     otpEnabled  = serializers.BooleanField(source='otp_enabled', default=False, required=False)
     user_role   = RoleSerializer(read_only=True, allow_null=True)
     office      = OfficeSerializer(read_only=True, allow_null=True)
     working_office = serializers.SerializerMethodField()
-    position_details = PositionSerializer(source='position', read_only=True, allow_null=True)
-    department  = serializers.CharField(allow_null=True, allow_blank=True, required=False)
-    designation = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    position_details = serializers.SerializerMethodField()
+    department  = serializers.SerializerMethodField()
+    designation = serializers.SerializerMethodField()
     user_role_id = serializers.PrimaryKeyRelatedField(
         queryset=Role.objects.all(),
         source='user_role',
@@ -268,21 +299,6 @@ class UserSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
-    working_office_id = RobustPrimaryKeyRelatedField(
-        queryset=WorkingOffice.objects.all(),
-        source='working_office',
-        write_only=True,
-        required=False,
-        allow_null=True,
-    )
-    position_id = serializers.PrimaryKeyRelatedField(
-        queryset=Position.objects.all(),
-        source='position',
-        write_only=True,
-        required=False,
-        allow_null=True,
-    )
-
     user_role_details = serializers.SerializerMethodField()
     office_details = serializers.SerializerMethodField()
     working_office_details = serializers.SerializerMethodField()
@@ -293,7 +309,7 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             '_id', 'employeeId', 'name', 'email', 'phoneNumber', 'department', 'designation',
             'isActive', 'otpEnabled', 'user_role', 'user_role_id', 'office', 'office_id', 
-            'working_office', 'working_office_id', 'position_id', 'position_details', 'last_login', 'is_staff',
+            'working_office', 'position_details', 'last_login', 'is_staff',
             'user_role_details', 'office_details', 'working_office_details', 'permissions'
         ]
         extra_kwargs = {
@@ -305,7 +321,20 @@ class UserSerializer(serializers.ModelSerializer):
         """Combine first_name and last_name, fallback to name field"""
         if obj.first_name or obj.last_name:
             return f"{obj.first_name} {obj.last_name}".strip()
-        return obj.name or ''
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'name', '') or ''
+
+    def get_phoneNumber(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'phone', None) or getattr(profile, 'mno', None)
+
+    def get_department(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'department', None)
+
+    def get_designation(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'designation', None)
 
     def get_user_role_details(self, obj):
         if hasattr(obj, 'user_role') and obj.user_role:
@@ -314,34 +343,41 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_office_details(self, obj):
         if hasattr(obj, 'office') and obj.office:
-            return {'id': obj.office.id, 'name': obj.office.name, 'code': obj.office.code}
+            return {
+                'id': obj.office.id,
+                'name': obj.office.name,
+                'code': obj.office.code,
+                'directorate': {
+                    'id': obj.office.directorate.id,
+                    'name': obj.office.directorate.name,
+                } if getattr(obj.office, 'directorate', None) else None,
+            }
         return None
 
     def get_working_office(self, obj):
-        office_id = getattr(obj, 'working_office_id', None)
-        if office_id:
-            office = WorkingOffice.objects.filter(id=office_id).first()
-            if office:
-                return WorkingOfficeSerializer(office).data
         return None
 
     def get_working_office_details(self, obj):
-        office_id = getattr(obj, 'working_office_id', None)
-        if office_id:
-            office = WorkingOffice.objects.filter(id=office_id).first()
-            if office:
-                return {'id': office.id, 'name': office.name_of_office}
+        return None
+
+    def get_position_details(self, obj):
+        profile = get_employee_profile(obj)
+        position_name = getattr(profile, 'position', None)
+        if position_name:
+            return {'name': position_name}
         return None
 
     def get_permissions(self, obj):
         return obj.get_permission_codenames()
 
     def update(self, instance, validated_data):
+        profile = get_employee_profile(instance)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         # Handle 'name' from request data (it's a SerializerMethodField so not in validated_data)
         request = self.context.get('request')
+        profile_updates = []
         if request and 'name' in request.data:
             name_value = request.data['name']
             if name_value is not None:
@@ -350,10 +386,27 @@ class UserSerializer(serializers.ModelSerializer):
                 parts = name_str.split(' ', 1)
                 instance.first_name = parts[0]
                 instance.last_name = parts[1] if len(parts) > 1 else ''
-                instance.name = name_str
+                if profile:
+                    profile.name = name_str
+                    profile_updates.append('name')
+
+        if request:
+            if 'phoneNumber' in request.data and profile:
+                phone_value = request.data['phoneNumber']
+                profile.phone = phone_value
+                profile.mno = phone_value
+                profile_updates.extend(['phone', 'mno'])
+            if 'department' in request.data and profile:
+                profile.department = request.data['department']
+                profile_updates.append('department')
+            if 'designation' in request.data and profile:
+                profile.designation = request.data['designation']
+                profile_updates.append('designation')
 
         logger.info(f"UserSerializer.update: Saving user {instance.employee_id} with validated_data: {validated_data}")
         instance.save()
+        if profile and profile_updates:
+            profile.save(update_fields=list(dict.fromkeys(profile_updates)))
         return instance
 
 
@@ -363,10 +416,10 @@ class EmployeeByIdSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     isActive = serializers.BooleanField(source='is_active')
     otpEnabled = serializers.BooleanField(source='otp_enabled')
-    department = serializers.CharField(allow_blank=True)
-    designation = serializers.CharField(allow_blank=True)
-    phoneNumber = serializers.CharField(source='phone', read_only=True, allow_null=True)
-    position_name = serializers.SlugRelatedField(source='position', slug_field='name', read_only=True)
+    department = serializers.SerializerMethodField()
+    designation = serializers.SerializerMethodField()
+    phoneNumber = serializers.SerializerMethodField()
+    position_name = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
 
     class Meta:
@@ -381,7 +434,24 @@ class EmployeeByIdSerializer(serializers.ModelSerializer):
         """Combine first_name and last_name, fallback to name field"""
         if obj.first_name or obj.last_name:
             return f"{obj.first_name} {obj.last_name}".strip()
-        return obj.name or ''
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'name', '') or ''
+
+    def get_department(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'department', None)
+
+    def get_designation(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'designation', None)
+
+    def get_phoneNumber(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'phone', None) or getattr(profile, 'mno', None)
+
+    def get_position_name(self, obj):
+        profile = get_employee_profile(obj)
+        return getattr(profile, 'position', None)
 
     def get_permissions(self, obj):
         return obj.get_permission_codenames()
@@ -392,7 +462,11 @@ class EmployeeByIdSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), source='user_role', required=True)
     office = serializers.PrimaryKeyRelatedField(queryset=Office.objects.all(), required=False, allow_null=True)
-    working_office = serializers.PrimaryKeyRelatedField(queryset=WorkingOffice.objects.all(), required=False, allow_null=True)
+    working_office = serializers.PrimaryKeyRelatedField(queryset=WorkingOffice.objects.all(), required=False, allow_null=True, write_only=True)
+    name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    phone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    department = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    designation = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = CustomUser
@@ -400,10 +474,31 @@ class RegisterSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
+        name = validated_data.pop('name', None)
+        phone = validated_data.pop('phone', None)
+        department = validated_data.pop('department', None)
+        designation = validated_data.pop('designation', None)
+        working_office = validated_data.pop('working_office', None)
         password = validated_data.pop('password')
         user = CustomUser(**validated_data)
         user.set_password(password)
         user.save()
+
+        employee_profile_defaults = {
+            'name': name or '',
+            'phone': phone or '',
+            'mno': phone or '',
+            'department': department or '',
+            'designation': designation or '',
+        }
+        EmployeeDetail.objects.update_or_create(
+            employee_id=user.employee_id,
+            defaults={
+                'user': user,
+                'email': user.email,
+                **employee_profile_defaults,
+            },
+        )
         return user
 
     def validate(self, data):
@@ -422,10 +517,13 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 class EmployeeDetailSerializer(serializers.ModelSerializer):
+    user_employee_id = serializers.CharField(source='user.employee_id', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+
     class Meta:
         model = EmployeeDetail
-        fields = ['employee_id', 'name', 'email', 'position', 'level', 'service',
-                  'group', 'qualification', 'seniority', 'retirement', 'mno']
+        fields = ['employee_id', 'user_employee_id', 'user_email', 'name', 'email', 'phone', 'position', 'level', 'service',
+                  'group', 'qualification', 'seniority', 'retirement', 'mno', 'department', 'designation']
 
 
 class CreateUserFromEmployeeSerializer(serializers.Serializer):
@@ -483,10 +581,6 @@ class CreateUserFromEmployeeSerializer(serializers.Serializer):
         user_data = {
             'employee_id': employee.employee_id,
             'email': employee.email,
-            'name': employee.name or '',
-            'phone': employee.mno or '',
-            'department': employee.group or '',
-            'designation': employee.position or '',
             'user_role': role,
             'is_active': True,
             'otp_enabled': False,
@@ -495,6 +589,25 @@ class CreateUserFromEmployeeSerializer(serializers.Serializer):
 
         # Create the user
         user = CustomUser.objects.create_user(**user_data)
+
+        EmployeeDetail.objects.update_or_create(
+            employee_id=employee.employee_id,
+            defaults={
+                'user': user,
+                'email': employee.email,
+                'name': employee.name or '',
+                'phone': employee.phone or employee.mno or '',
+                'mno': employee.mno or employee.phone or '',
+                'department': employee.department or employee.group or '',
+                'designation': employee.designation or employee.position or '',
+                'position': employee.position or '',
+                'service': employee.service or '',
+                'group': employee.group or '',
+                'qualification': employee.qualification or '',
+                'seniority': employee.seniority,
+                'retirement': employee.retirement,
+            },
+        )
 
         # Store the plain password for response (will be removed in production)
         user._generated_password = password if auto_generate_password else None
@@ -517,23 +630,23 @@ class EmployeeToUserPreviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmployeeDetail
-        fields = ['employee_id', 'name', 'email', 'position', 'group', 'mno',
+        fields = ['employee_id', 'name', 'email', 'phone', 'position', 'level', 'service', 'group', 'mno', 'department', 'designation',
                   'mapped_name', 'mapped_phone', 'mapped_department', 'mapped_designation', 'can_create_user']
 
     def get_mapped_name(self, obj):
         return obj.name or ''
 
     def get_mapped_phone(self, obj):
-        return obj.mno or ''
+        return obj.phone or obj.mno or ''
 
     def get_mapped_department(self, obj):
-        return obj.group or ''
+        return obj.department or obj.group or ''
 
     def get_mapped_designation(self, obj):
-        return obj.position or ''
+        return obj.designation or obj.position or ''
 
     def get_can_create_user(self, obj):
-        return not CustomUser.objects.filter(employee_id=obj.employee_id).exists()
+        return obj.user_id is None and not CustomUser.objects.filter(employee_id=obj.employee_id).exists()
 
 
 class OTPVerifySerializer(serializers.Serializer):

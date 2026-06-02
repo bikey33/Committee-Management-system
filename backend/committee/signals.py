@@ -85,3 +85,77 @@ def auto_create_stakeholder_on_committee_join(sender, instance, created, **kwarg
         f"{procurement_plan.policy_number} (role: {stakeholder_role}, "
         f"committee: {committee.name})"
     )
+
+
+@receiver(post_save, sender='committee.Committee')
+def auto_create_phase_checkpoints(sender, instance, created, **kwargs):
+    """
+    Automatically create phase checkpoints when a committee is created.
+    """
+    if not created:
+        return
+    
+    from .models import CommitteePhaseCheckpoint
+    
+    committee = instance
+    
+    # Default checkpoints for initialization phase
+    init_checkpoints = [
+        {
+            'phase': 'initialization',
+            'name': 'Committee Formation',
+            'description': 'Committee has been properly formed with all members assigned',
+            'order': 1
+        },
+        {
+            'phase': 'initialization',
+            'name': 'First Meeting',
+            'description': 'Committee conducted its first official meeting',
+            'order': 2
+        },
+        {
+            'phase': 'initialization',
+            'name': 'Specification Review',
+            'description': 'Tender specifications have been reviewed and finalized',
+            'order': 3
+        }
+    ]
+    
+    # Default checkpoints for finalization phase
+    final_checkpoints = [
+        {
+            'phase': 'finalization',
+            'name': 'Evaluation Complete',
+            'description': 'Evaluation process has been completed',
+            'order': 1
+        },
+        {
+            'phase': 'finalization',
+            'name': 'Report Generation',
+            'description': 'Committee report has been generated',
+            'order': 2
+        },
+        {
+            'phase': 'finalization',
+            'name': 'Final Approval',
+            'description': 'Final recommendations have been approved',
+            'order': 3
+        }
+    ]
+    
+    all_checkpoints = init_checkpoints + final_checkpoints
+    
+    for cp_data in all_checkpoints:
+        CommitteePhaseCheckpoint.objects.get_or_create(
+            committee=committee,
+            phase=cp_data['phase'],
+            order=cp_data['order'],
+            defaults={
+                'name': cp_data['name'],
+                'description': cp_data['description'],
+            }
+        )
+    
+    logger.info(
+        f"Auto-created {len(all_checkpoints)} checkpoints for committee '{committee.name}'"
+    )

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.conf import settings
-from .models import Committee, CommitteeMembership, CommitteeRole
+from .models import Committee, CommitteeMembership, CommitteeRole, CommitteePhaseCheckpoint
 from django.db.utils import OperationalError, ProgrammingError
 from users.models import CustomUser, Office
 from procurement.models import ProcurementPlan
@@ -50,6 +50,47 @@ class CommitteeMemberSerializer(serializers.ModelSerializer):
         return getattr(obj, 'designation', None)
 
 
+class CommitteePhaseCheckpointSerializer(serializers.ModelSerializer):
+    """Serializer for committee phase checkpoints"""
+    completedBy = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CommitteePhaseCheckpoint
+        fields = [
+            'id', 'phase', 'name', 'description', 'order', 'is_completed',
+            'completed_date', 'completedBy', 'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'completed_date']
+    
+    def get_completedBy(self, obj):
+        if obj.completed_by:
+            return {
+                'id': obj.completed_by.employee_id,
+                'name': f"{obj.completed_by.first_name} {obj.completed_by.last_name}".strip() or obj.completed_by.username,
+                'email': obj.completed_by.email
+            }
+        return None
+
+
+class CommitteePhaseSerializer(serializers.Serializer):
+    """Serializer for committee phase information"""
+    phase = serializers.CharField()
+    name = serializers.CharField()
+    order = serializers.IntegerField()
+    completed = serializers.BooleanField()
+    visible = serializers.BooleanField()
+    checkpoints = CommitteePhaseCheckpointSerializer(many=True)
+    completion_percentage = serializers.SerializerMethodField()
+    
+    def get_completion_percentage(self, obj):
+        checkpoints = obj.get('checkpoints', [])
+        if not checkpoints:
+            return 0
+        completed_count = sum(1 for cp in checkpoints if cp.get('is_completed'))
+        return int((completed_count / len(checkpoints)) * 100)
+
+
+
 class CommitteeSerializer(serializers.ModelSerializer):
     _id = serializers.CharField(source='id', read_only=True)
     createdBy = serializers.SerializerMethodField()
@@ -76,6 +117,13 @@ class CommitteeSerializer(serializers.ModelSerializer):
     
     office_name = serializers.SerializerMethodField()
     formationLetterURL = serializers.SerializerMethodField()
+    members_count = serializers.SerializerMethodField()
+    
+    # Phase and checkpoint fields
+    current_phase = serializers.CharField(required=False)
+    phases = serializers.SerializerMethodField()
+    initialization_phase_completed = serializers.SerializerMethodField()
+    finalization_phase_completed = serializers.SerializerMethodField()
 
     class Meta:
         model = Committee
@@ -84,10 +132,12 @@ class CommitteeSerializer(serializers.ModelSerializer):
             'deadline', 'formation_date', 'assigned_date', 'specification_submission_date',
             'review_date', 'completion_date', 'decision_date',
             'formation_letter', 'formationLetterURL', 'approval_status', 'committee_status',
-            'members', 'membersList', 'createdBy', 'createdAt', 'updatedAt'
+            'members', 'membersList', 'members_count', 'createdBy', 'createdAt', 'updatedAt',
+            'current_phase', 'phases', 'initialization_phase_completed', 'finalization_phase_completed'
         ]
         read_only_fields = [
-            'id', 'createdBy', 'createdAt', 'updatedAt', 'membersList', 'office_name', 'formationLetterURL'
+            'id', 'createdBy', 'createdAt', 'updatedAt', 'membersList', 'office_name', 
+            'formationLetterURL', 'members_count', 'phases', 'initialization_phase_completed', 'finalization_phase_completed'
         ]
 
     def get_createdBy(self, obj):
@@ -108,6 +158,10 @@ class CommitteeSerializer(serializers.ModelSerializer):
             return obj.formation_letter.url
         return None
 
+    def get_members_count(self, obj):
+        """Return the count of members in the committee"""
+        return obj.memberships.count()
+
     def get_office_name(self, obj):
         if obj.office:
             return obj.office.name
@@ -124,6 +178,39 @@ class CommitteeSerializer(serializers.ModelSerializer):
             many=True,
             context={'committee': obj, 'role_map': role_map}
         ).data
+    
+    def get_phases(self, obj):
+        """Get phase progress information"""
+        phase_progress = obj.get_phase_progress()
+        phases_data = []
+        
+        for phase_key in ['initialization', 'finalization']:
+            phase_info = phase_progress.get(phase_key, {})
+            checkpoints = phase_info.get('checkpoints', [])
+            
+            # Only include finalization if initialization is complete
+            if phase_key == 'finalization' and not obj.initialization_phase_completed:
+                continue
+            
+            phases_data.append({
+                'phase': phase_key,
+                'name': phase_info.get('name', ''),
+                'order': phase_info.get('order', 0),
+                'completed': phase_info.get('completed', False),
+                'visible': phase_info.get('visible', True),
+                'checkpoints': CommitteePhaseCheckpointSerializer(checkpoints, many=True).data,
+                'completion_percentage': int((sum(1 for cp in checkpoints if cp.is_completed) / len(checkpoints)) * 100) if checkpoints else 0
+            })
+        
+        return phases_data
+    
+    def get_initialization_phase_completed(self, obj):
+        """Check if initialization phase is completed"""
+        return obj.initialization_phase_completed
+    
+    def get_finalization_phase_completed(self, obj):
+        """Check if finalization phase is completed"""
+        return obj.finalization_phase_completed
 
     def validate(self, data):
         committee_type = data.get('committee_type')

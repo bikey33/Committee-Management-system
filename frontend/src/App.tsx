@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { DashboardLayout } from './layouts/DashboardLayout'
 import { CommitteesPage } from './pages/CommitteesPage'
+import { DashboardPage } from './pages/DashboardPage'
 import { OfficesPage } from './pages/OfficesPage'
 import { UsersPage } from './pages/UsersPage'
 import { LoginPage } from './pages/LoginPage'
@@ -15,9 +16,9 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           
           <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<Navigate to="/committees" replace />} />
-            
             <Route element={<DashboardLayout><Outlet /></DashboardLayout>}>
+              <Route index element={<DashboardPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/offices" element={<OfficesPage />} />
               <Route path="/committees" element={<CommitteesPage />} />
               <Route path="/users" element={<UsersPage />} />

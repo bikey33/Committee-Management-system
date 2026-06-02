@@ -1,3 +1,6 @@
+import io
+from unittest.mock import patch
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -39,9 +42,13 @@ class CommitteeAPITestCase(TestCase):
 
         # Create a procurement plan for testing
         self.procurement_plan = ProcurementPlan.objects.create(
+            policy_number='PN-001',
+            department='Test Department',
+            dept_index='001',
             project_name='Test Project',
             project_description='Test Description',
             estimated_cost=100000,
+            budget=90000,
             owner=self.superadmin,
             office=self.office
         )
@@ -97,6 +104,52 @@ class CommitteeAPITestCase(TestCase):
         )
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_download_formation_letter_uses_storage_backend(self):
+        committee = Committee.objects.create(
+            name='Storage Committee',
+            formation_date='2025-04-01',
+            purpose='Storage-backed formation letter',
+            committee_type='other',
+            created_by=self.superadmin,
+        )
+        Committee.objects.filter(pk=committee.pk).update(
+            formation_letter='formation_letters/storage-backed-letter.pdf'
+        )
+
+        download_url = f'/api/committee/committees/{committee.id}/download/'
+
+        with patch.object(committee.formation_letter.storage, 'exists', return_value=True) as mocked_exists, \
+             patch.object(committee.formation_letter.storage, 'open', return_value=io.BytesIO(b'%PDF-1.4 fake pdf')) as mocked_open:
+            response = self.client.get(download_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Disposition'], 'attachment; filename="storage-backed-letter.pdf"')
+        mocked_exists.assert_called_once_with('formation_letters/storage-backed-letter.pdf')
+        mocked_open.assert_called_once_with('formation_letters/storage-backed-letter.pdf', 'rb')
+
+    def test_preview_formation_letter_uses_storage_backend(self):
+        committee = Committee.objects.create(
+            name='Preview Storage Committee',
+            formation_date='2025-04-01',
+            purpose='Storage-backed preview',
+            committee_type='other',
+            created_by=self.superadmin,
+        )
+        Committee.objects.filter(pk=committee.pk).update(
+            formation_letter='formation_letters/preview-backed-letter.pdf'
+        )
+
+        preview_url = f'/api/committee/committees/{committee.id}/preview/'
+
+        with patch.object(committee.formation_letter.storage, 'exists', return_value=True) as mocked_exists, \
+             patch.object(committee.formation_letter.storage, 'open', return_value=io.BytesIO(b'%PDF-1.4 fake pdf')) as mocked_open:
+            response = self.client.get(preview_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Disposition'], 'inline; filename="preview-backed-letter.pdf"')
+        mocked_exists.assert_called_once_with('formation_letters/preview-backed-letter.pdf')
+        mocked_open.assert_called_once_with('formation_letters/preview-backed-letter.pdf', 'rb')
 
     def tearDown(self):
         self.client.force_authenticate(user=None)

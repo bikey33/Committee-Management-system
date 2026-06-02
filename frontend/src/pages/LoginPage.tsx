@@ -24,7 +24,7 @@ export function LoginPage() {
     try {
       await authService.login(employeeId, password);
       toast.success("Login successful!");
-      navigate("/committees");
+      navigate("/");
     } catch (error: any) {
       toast.error(
         error.response?.data?.detail || "Login failed. Please check your credentials."

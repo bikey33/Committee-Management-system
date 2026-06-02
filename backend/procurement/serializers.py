@@ -284,11 +284,11 @@ class StageHistorySerializer(serializers.ModelSerializer):
 
 class ProcurementStakeholderSerializer(serializers.ModelSerializer):
     """Serializer for ProcurementStakeholder model"""
-    user_name = serializers.CharField(source='user.name', read_only=True)
+    user_name = serializers.CharField(source='user.employee_profile.name', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
     procurement_plan_title = serializers.CharField(source='procurement_plan.project_name', read_only=True)
-    assigned_by_name = serializers.CharField(source='assigned_by.name', read_only=True)
-    escalation_contact_name = serializers.CharField(source='escalation_contact.name', read_only=True)
+    assigned_by_name = serializers.CharField(source='assigned_by.employee_profile.name', read_only=True)
+    escalation_contact_name = serializers.CharField(source='escalation_contact.employee_profile.name', read_only=True)
 
     class Meta:
         model = ProcurementStakeholder

@@ -16,7 +16,7 @@ export const useToast = () => {
       sonnerToast.error(message);
     } else {
       sonnerToast.success(message);
-    }
+   } 
   }, []);
 
   return { toast };

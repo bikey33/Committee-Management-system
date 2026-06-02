@@ -19,7 +19,7 @@ import { toast } from "sonner";
 const officeSchema = z.object({
   name: z.string().min(1, "Name is required"),
   code: z.string().min(1, "Code is required"),
-  department: z.string().optional().nullable(),
+  directorate: z.string().min(1, "Directorate is required"),
 });
 
 type OfficeFormValues = z.infer<typeof officeSchema>;
@@ -34,9 +34,9 @@ export function OfficeFormModal({ isOpen, onClose, officeToEdit }: Props) {
   const queryClient = useQueryClient();
   const isEditing = !!officeToEdit;
 
-  const { data: departments = [] } = useQuery({
-    queryKey: ["departments"],
-    queryFn: officesService.getDepartments,
+  const { data: directorates = [] } = useQuery({
+    queryKey: ["directorates"],
+    queryFn: officesService.getDirectorates,
     enabled: isOpen,
   });
 
@@ -50,7 +50,7 @@ export function OfficeFormModal({ isOpen, onClose, officeToEdit }: Props) {
     defaultValues: {
       name: "",
       code: "",
-      department: "",
+      directorate: "",
     },
   });
 
@@ -59,7 +59,7 @@ export function OfficeFormModal({ isOpen, onClose, officeToEdit }: Props) {
       reset({
         name: officeToEdit.name,
         code: officeToEdit.code,
-        department: officeToEdit.department ? String(officeToEdit.department) : "",
+        directorate: officeToEdit.directorate ? String(officeToEdit.directorate) : officeToEdit.directorate_details?.id ? String(officeToEdit.directorate_details.id) : "",
       });
     } else if (!isOpen) {
       reset();
@@ -71,7 +71,7 @@ export function OfficeFormModal({ isOpen, onClose, officeToEdit }: Props) {
       const payload: Partial<Office> = {
         name: data.name,
         code: data.code,
-        department: data.department ? parseInt(data.department) : null,
+        directorate: data.directorate ? parseInt(data.directorate) : null,
       };
 
       if (isEditing) {
@@ -113,21 +113,21 @@ export function OfficeFormModal({ isOpen, onClose, officeToEdit }: Props) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="department">Department</Label>
+            <Label htmlFor="directorate">Directorate</Label>
             <select
-              id="department"
+              id="directorate"
               className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              {...register("department")}
+              {...register("directorate")}
             >
-              <option value="">-- Select Department --</option>
-              {departments?.map((department: any) => (
-                <option key={department.id} value={department.id}>
-                  {department.name} ({department.code})
+              <option value="">-- Select Directorate --</option>
+              {directorates?.map((directorate: any) => (
+                <option key={directorate.id} value={directorate.id}>
+                  {directorate.name}
                 </option>
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              Select the single department this office belongs to.
+              Select the directorate this office belongs to.
             </p>
           </div>
 

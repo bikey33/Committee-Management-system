@@ -11,14 +11,14 @@ from django.conf import settings
 from django.http import JsonResponse
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Office, Department, Position, WorkingOffice
+from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Directorate, Office, Department, Position, WorkingOffice
 from .serializers import (
     RegisterSerializer, UserSerializer, RoleSerializer, PermissionSerializer,
     ForgotPasswordSerializer, ResetPasswordSerializer, EmployeeByIdSerializer,
     CustomTokenObtainPairSerializer, EmployeeDetailSerializer,
     CreateUserFromEmployeeSerializer, EmployeeToUserPreviewSerializer,
     OTPVerifySerializer, OTPResendSerializer, PermissionAuditLogSerializer,
-    OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer
+    DirectorateSerializer, OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer
 )
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -185,16 +185,16 @@ class OTPVerifyView(APIView):
                         'id': user.office.id,
                         'name': user.office.name,
                         'code': user.office.code,
-                        'ancestors': [a.id for a in user.office.get_ancestors()]
+                        'directorate': {
+                            'id': user.office.directorate.id,
+                            'name': user.office.directorate.name,
+                        } if getattr(user.office, 'directorate', None) else None,
                     } if getattr(user, 'office', None) else None,
-                    'working_office': {
-                        'id': user.working_office.id,
-                        'name': user.working_office.name_of_office,
-                    } if getattr(user, 'working_office', None) else None,
+                    'working_office': None,
                     'user_role_id': user.user_role.id if getattr(user, 'user_role', None) else None,
-                    'department': user.department,
-                    'phoneNumber': user.phone,
-                    'designation': user.designation,
+                    'department': getattr(getattr(user, 'employee_profile', None), 'department', None),
+                    'phoneNumber': getattr(getattr(user, 'employee_profile', None), 'phone', None) or getattr(getattr(user, 'employee_profile', None), 'mno', None),
+                    'designation': getattr(getattr(user, 'employee_profile', None), 'designation', None),
                     'isActive': user.is_active,
                     'otpEnabled': user.otp_enabled,
                     'permissions': user.get_permission_codenames(), # Use helper method instead of non-existent field
@@ -371,17 +371,29 @@ class UserProfileView(APIView):
         if 'otpEnabled' in data:
             data['otp_enabled'] = data.pop('otpEnabled')
         update_fields = []
+        profile_updates = []
         if 'name' in data:
-            user.name = data['name']
-            update_fields.append('name')
+            user.first_name = data['name'].split(' ', 1)[0]
+            user.last_name = data['name'].split(' ', 1)[1] if len(data['name'].split(' ', 1)) > 1 else ''
+            update_fields.append('first_name')
+            update_fields.append('last_name')
+            profile = getattr(user, 'employee_profile', None)
+            if profile:
+                profile.name = data['name']
+                profile_updates.append('name')
         if 'phone' in data:
-            user.phone = data['phone']
-            update_fields.append('phone')
+            profile = getattr(user, 'employee_profile', None)
+            if profile:
+                profile.phone = data['phone']
+                profile.mno = data['phone']
+                profile_updates.extend(['phone', 'mno'])
         if 'otp_enabled' in data:
             user.otp_enabled = data['otp_enabled']
             update_fields.append('otp_enabled')
         if update_fields:
             user.save(update_fields=update_fields)
+        if profile_updates:
+            profile.save(update_fields=list(dict.fromkeys(profile_updates)))
         serializer = UserSerializer(user)
         return Response(serializer.data)
 
@@ -1248,13 +1260,51 @@ class AvailableEmployeesForUserCreationView(APIView):
 # Office hierarchy endpoints
 # ---------------------------------------------------------------------------
 
+class DirectorateListView(generics.ListAPIView):
+    """GET /directorates/ — list all directorates."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = DirectorateSerializer
+
+    def get_queryset(self):
+        return Directorate.objects.all().prefetch_related('departments', 'offices')
+
+
+class DirectorateCreateView(generics.CreateAPIView):
+    """POST /directorates/create/ — create a new directorate."""
+    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
+    serializer_class = DirectorateSerializer
+
+
+class DirectorateUpdateView(generics.UpdateAPIView):
+    """PATCH /directorates/<id>/ — edit a directorate."""
+    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
+    serializer_class = DirectorateSerializer
+    queryset = Directorate.objects.all()
+
+
+class DirectorateDeleteView(generics.DestroyAPIView):
+    """DELETE /directorates/<id>/delete/ — delete a directorate."""
+    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
+    queryset = Directorate.objects.all()
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.offices.exists():
+            return Response({'error': 'Cannot delete directorate with related offices.'}, status=status.HTTP_400_BAD_REQUEST)
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 class OfficeListView(generics.ListAPIView):
     """GET /offices/ — list all offices."""
     permission_classes = [IsAuthenticated]
     serializer_class = OfficeSerializer
 
     def get_queryset(self):
-        return Office.objects.all()
+        queryset = Office.objects.select_related('directorate').all()
+        directorate_id = self.request.query_params.get('directorate')
+        if directorate_id:
+            queryset = queryset.filter(directorate_id=directorate_id)
+        return queryset
 
 class OfficeCreateView(generics.CreateAPIView):
     """POST /offices/create/ — create a new office."""
@@ -1274,38 +1324,10 @@ class OfficeDeleteView(generics.DestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        if CustomUser.objects.filter(office=instance).exists() or Office.objects.filter(parent=instance).exists():
-            return Response({'error': 'Cannot delete office with assigned users or child offices.'}, status=status.HTTP_400_BAD_REQUEST)
+        if CustomUser.objects.filter(office=instance).exists():
+            return Response({'error': 'Cannot delete office with assigned users.'}, status=status.HTTP_400_BAD_REQUEST)
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class DepartmentListView(generics.ListAPIView):
-    """GET /departments/ — list all departments."""
-    permission_classes = [IsAuthenticated]
-    serializer_class = DepartmentSerializer
-
-    def get_queryset(self):
-        return Department.objects.all()
-
-
-class DepartmentCreateView(generics.CreateAPIView):
-    """POST /departments/create/ — create a department."""
-    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
-    serializer_class = DepartmentSerializer
-
-
-class DepartmentUpdateView(generics.UpdateAPIView):
-    """PATCH /departments/<id>/ — update a department."""
-    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
-    serializer_class = DepartmentSerializer
-    queryset = Department.objects.all()
-
-
-class DepartmentDeleteView(generics.DestroyAPIView):
-    """DELETE /departments/<id>/delete/ — delete a department."""
-    permission_classes = [IsAuthenticated, HasPermission('settings.offices')]
-    queryset = Department.objects.all()
 
 # ---------------------------------------------------------------------------
 # Position list endpoint

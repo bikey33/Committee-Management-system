@@ -72,12 +72,58 @@ class Committee(models.Model):
     deadline = models.DateField(null=True, blank=True)
     specification_title = models.CharField(max_length=255, blank=True, null=True)
     specification_description = models.TextField(blank=True, null=True)
+    
+    # Phase management
+    current_phase = models.CharField(
+        max_length=20,
+        choices=[
+            ('initialization', 'Initialization'),
+            ('finalization', 'Finalization'),
+        ],
+        default='initialization',
+        help_text="Current phase of the committee lifecycle"
+    )
 
     class Meta:
         ordering = ['-created_at']  # Newest first (descending order)
 
     def __str__(self):
         return self.name
+    
+    def get_phase_progress(self):
+        """Get progress information for current and all phases"""
+        phases = {
+            'initialization': {
+                'name': 'Initialization',
+                'order': 1,
+                'completed': self.initialization_phase_completed,
+                'checkpoints': list(self.checkpoints.filter(phase='initialization').order_by('order'))
+            },
+            'finalization': {
+                'name': 'Finalization',
+                'order': 2,
+                'completed': self.finalization_phase_completed,
+                'checkpoints': list(self.checkpoints.filter(phase='finalization').order_by('order')),
+                'visible': self.initialization_phase_completed
+            }
+        }
+        return phases
+    
+    @property
+    def initialization_phase_completed(self):
+        """Check if all initialization checkpoints are completed"""
+        checkpoints = self.checkpoints.filter(phase='initialization')
+        if not checkpoints.exists():
+            return False
+        return all(cp.is_completed for cp in checkpoints)
+    
+    @property
+    def finalization_phase_completed(self):
+        """Check if all finalization checkpoints are completed"""
+        checkpoints = self.checkpoints.filter(phase='finalization')
+        if not checkpoints.exists():
+            return False
+        return all(cp.is_completed for cp in checkpoints)
 
 
 class CommitteeRole(models.Model):
@@ -135,3 +181,57 @@ class ReviewCommitteeDefaultMember(models.Model):
     def __str__(self):
         office_label = self.office.name if self.office else "Global"
         return f"{self.user.username} - {self.committee_role} ({office_label})"
+
+
+class CommitteePhaseCheckpoint(models.Model):
+    """Tracks checkpoints/milestones in each phase of a committee's lifecycle"""
+    
+    PHASE_CHOICES = [
+        ('initialization', 'Initialization'),
+        ('finalization', 'Finalization'),
+    ]
+    
+    committee = models.ForeignKey(
+        Committee,
+        on_delete=models.CASCADE,
+        related_name='checkpoints'
+    )
+    phase = models.CharField(
+        max_length=20,
+        choices=PHASE_CHOICES,
+        help_text="Which phase this checkpoint belongs to"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    order = models.PositiveIntegerField(default=0)
+    is_completed = models.BooleanField(default=False)
+    completed_date = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='completed_checkpoints'
+    )
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['phase', 'order', 'created_at']
+        unique_together = ('committee', 'phase', 'order')
+        indexes = [
+            models.Index(fields=['committee', 'phase']),
+            models.Index(fields=['committee', 'is_completed']),
+        ]
+    
+    def __str__(self):
+        return f"{self.committee.name} - {self.get_phase_display()} - {self.name}"
+    
+    def mark_completed(self, user=None):
+        """Mark checkpoint as completed"""
+        from django.utils import timezone
+        self.is_completed = True
+        self.completed_date = timezone.now()
+        self.completed_by = user
+        self.save()

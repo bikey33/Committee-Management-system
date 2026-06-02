@@ -16,8 +16,11 @@ import { usersService } from "@/api/users";
 import { toast } from "sonner";
 
 const userSchema = z.object({
-  employee_id: z.string().min(1, "Employee is required"),
+  employee_id: z.string().min(1, "Employee ID is required"),
+  username: z.string().min(1, "Username is required"),
+  email: z.string().email("Invalid email address"),
   role_id: z.string().min(1, "Role assignment is required"),
+  password: z.string().optional(),
 });
 
 type UserFormValues = z.infer<typeof userSchema>;
@@ -29,12 +32,6 @@ interface Props {
 
 export function UserFormModal({ isOpen, onClose }: Props) {
   const queryClient = useQueryClient();
-
-  const { data: availableEmployees, isLoading: loadingEmployees } = useQuery({
-    queryKey: ["availableEmployees"],
-    queryFn: usersService.getAvailableEmployees,
-    enabled: isOpen,
-  });
 
   const { data: roles } = useQuery({
     queryKey: ["roles"],
@@ -51,15 +48,23 @@ export function UserFormModal({ isOpen, onClose }: Props) {
     resolver: zodResolver(userSchema),
     defaultValues: {
       employee_id: "",
+      username: "",
+      email: "",
       role_id: "",
+      password: "",
     },
   });
 
   const mutation = useMutation({
     mutationFn: (data: UserFormValues) => {
-      return usersService.createFromEmployee({
+      // If password not provided, generate a random temporary password
+      const password = data.password && data.password.length > 0 ? data.password : Math.random().toString(36).slice(-10) + "A1!";
+      return usersService.register({
         employee_id: data.employee_id,
-        role_id: Number(data.role_id),
+        username: data.username,
+        email: data.email,
+        password,
+        role: Number(data.role_id),
       });
     },
     onSuccess: () => {
@@ -90,21 +95,45 @@ export function UserFormModal({ isOpen, onClose }: Props) {
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="employee_id">Select Employee</Label>
-            <select
+            <Label htmlFor="employee_id">Employee ID</Label>
+            <input
               id="employee_id"
-              className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               {...register("employee_id")}
-              disabled={loadingEmployees}
-            >
-              <option value="">-- Choose an unpromoted employee --</option>
-              {availableEmployees?.map((emp: any) => (
-                <option key={emp.employee_id} value={emp.employee_id}>
-                  {emp.mapped_name || emp.name} ({emp.employee_id})
-                </option>
-              ))}
-            </select>
+            />
             {errors.employee_id && <span className="text-sm text-destructive">{errors.employee_id.message}</span>}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="username">Username</Label>
+            <input
+              id="username"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              {...register("username")}
+            />
+            {errors.username && <span className="text-sm text-destructive">{errors.username.message}</span>}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <input
+              id="email"
+              type="email"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              {...register("email")}
+            />
+            {errors.email && <span className="text-sm text-destructive">{errors.email.message}</span>}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Password (optional)</Label>
+            <input
+              id="password"
+              type="password"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              {...register("password")}
+            />
+            {errors.password && <span className="text-sm text-destructive">{errors.password.message}</span>}
           </div>
 
           <div className="space-y-2">

@@ -27,6 +27,14 @@ export const committeesService = {
     return Array.isArray(response.data) ? response.data : [];
   },
 
+  getByMember: async (employeeId: string) => {
+    const response = await apiClient.get(`/api/committee/committees/bymember/${employeeId}/`);
+    if (response.data?.data?.committees) {
+      return response.data.data.committees;
+    }
+    return Array.isArray(response.data) ? response.data : [];
+  },
+
   getById: async (id: string) => {
     const response = await apiClient.get(`/api/committee/committees/${id}/`);
     return response.data;

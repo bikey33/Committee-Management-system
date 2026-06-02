@@ -148,19 +148,44 @@ class RolePermission(models.Model):
         return f"{self.role.name} → {self.permission.codename}"
 
 
+class Directorate(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+    description = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'users_directorate'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class Department(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+    code = models.CharField(max_length=50, unique=True)
+    directorate = models.ForeignKey(
+        Directorate, on_delete=models.SET_NULL, null=True, blank=True, related_name='departments'
+    )
+    description = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'users_department'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Office(models.Model):
     name = models.CharField(max_length=200)
     code = models.CharField(max_length=50, unique=True)
-    parent = models.ForeignKey(
-        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children'
+    directorate = models.ForeignKey(
+        Directorate, on_delete=models.SET_NULL, null=True, blank=True, related_name='offices'
     )
-    departments = models.JSONField(default=list, blank=True)
-    department = models.ForeignKey(
-        'Department', on_delete=models.SET_NULL, null=True, blank=True, related_name='offices'
-    )
-    # linked_department = models.ForeignKey(
-    #     'department.Department', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_offices'
-    # )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -172,58 +197,10 @@ class Office(models.Model):
         return f"{self.name} ({self.code})"
 
     @property
-    def department_name(self):
-        if self.department:
-            return self.department.name
-        if not self.departments:
-            return None
-        values = [str(dept).strip() for dept in self.departments if str(dept).strip()]
-        return ", ".join(values) if values else None
-
-    def get_ancestors(self):
-        """Return list of ancestor Office instances (from root down to parent)."""
-        ancestors = []
-        current = self.parent
-        while current:
-            ancestors.insert(0, current)
-            current = current.parent
-        return ancestors
-
-    def get_descendants(self, include_self=False):
-        """Return a list of all descendant Office instances."""
-        descendants = [self] if include_self else []
-        for child in self.children.all():
-            descendants.extend(child.get_descendants(include_self=True))
-        return descendants
-
-    def get_subtree_department_names(self):
-        """Return a list of all department names linked to this office or any descendant office."""
-        names = set()
-        if self.department:
-            names.add(self.department.name)
-        for dept in self.departments or []:
-            dept = str(dept).strip()
-            if dept:
-                names.add(dept)
-        # Assuming we just traverse children
-        for child in self.children.all():
-            names.update(child.get_subtree_department_names())
-        return list(names)
-
-
-class Department(models.Model):
-    name = models.CharField(max_length=200, unique=True)
-    code = models.CharField(max_length=50, unique=True)
-    description = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'users_department'
-        ordering = ['name']
-
-    def __str__(self):
-        return self.name
+    def directorate_name(self):
+        if self.directorate:
+            return self.directorate.name
+        return None
 
 
 class WorkingOffice(models.Model):
@@ -250,20 +227,10 @@ class CustomUser(AbstractUser):
     _id         = models.CharField(max_length=100, unique=True, blank=True)
     employee_id = models.CharField(max_length=10, unique=True, primary_key=True)
     email       = models.EmailField(unique=True)
-    name        = models.CharField(max_length=150, blank=True)
-    phone       = models.CharField(max_length=15, blank=True)
-    department  = models.CharField(max_length=50, blank=True, null=True)
-    designation = models.CharField(max_length=100, blank=True, null=True, default='Engineer')
-
-    # RBAC and Office hierarchy
+    # Lightweight authentication/profile linkage only. Business data moved to EmployeeDetail.
+    # RBAC and Office hierarchy (keep office reference for permission scoping)
     office = models.ForeignKey(
         Office, on_delete=models.SET_NULL, null=True, blank=True, related_name='users'
-    )
-    working_office = models.ForeignKey(
-        WorkingOffice, on_delete=models.SET_NULL, null=True, blank=True, related_name='users', db_constraint=False
-    )
-    position = models.ForeignKey(
-        Position, on_delete=models.SET_NULL, null=True, blank=True, related_name='users'
     )
 
     # New RBAC role FK
@@ -402,8 +369,19 @@ class OTPLog(models.Model):
 
 class EmployeeDetail(models.Model):
     employee_id   = models.CharField(max_length=10, unique=True, primary_key=True)
+    user          = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='employee_profile',
+        null=True,
+        blank=True,
+    )
+
+    # Business / domain fields
     name          = models.CharField(max_length=150, blank=True, null=True)
-    email         = models.EmailField(unique=True)
+    email         = models.EmailField(unique=True, null=True, blank=True)
+    phone         = models.CharField(max_length=15, blank=True, null=True)
+    # keep position as free text to avoid tight coupling; can be converted to FK later
     position      = models.CharField(max_length=100, blank=True, null=True)
     level         = models.CharField(max_length=10, blank=True, null=True)
     service       = models.CharField(max_length=50, blank=True, null=True)
@@ -412,6 +390,8 @@ class EmployeeDetail(models.Model):
     seniority     = models.DateTimeField(blank=True, null=True)
     retirement    = models.DateTimeField(blank=True, null=True)
     mno           = models.CharField(max_length=15, blank=True, null=True)
+    department    = models.CharField(max_length=50, blank=True, null=True)
+    designation   = models.CharField(max_length=100, blank=True, null=True, default='Engineer')
 
     def __str__(self):
         return self.employee_id
