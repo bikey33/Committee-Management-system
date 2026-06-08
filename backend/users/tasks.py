@@ -1,7 +1,46 @@
+import logging
+
 from celery import shared_task
 from django.core.mail import send_mail
+from django.core.management import call_command
 from django.conf import settings
 from django.template.loader import render_to_string
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_sms_task(self, phone_number, message):
+    """
+    Deliver a plain SMS asynchronously.
+
+    Routing (console vs real gateway) is handled by send_plain_sms via
+    settings.SMS_BACKEND. On a transient gateway failure the task retries a few
+    times; once retries are exhausted it logs and gives up rather than raising,
+    so callers (e.g. signup) are never blocked on SMS delivery.
+    """
+    from utils.sms_sender import send_plain_sms
+
+    if send_plain_sms(phone_number, message):
+        return f"SMS sent to {phone_number}"
+
+    try:
+        raise self.retry(exc=RuntimeError("SMS delivery failed"))
+    except self.MaxRetriesExceededError:
+        logger.error(f"SMS permanently failed for {phone_number} after retries")
+        return f"SMS failed for {phone_number}"
+
+
+@shared_task
+def sync_erp_employees_task():
+    """
+    Periodically refresh the EmployeeDetail directory from the ERP staging table.
+
+    Thin wrapper around the `sync_erp_employees` management command so the
+    idempotent upsert logic lives in one place. Scheduled via CELERY_BEAT_SCHEDULE.
+    """
+    call_command('sync_erp_employees')
+    return "ERP employee sync completed"
 
 
 @shared_task

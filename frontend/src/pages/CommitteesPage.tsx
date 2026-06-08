@@ -11,6 +11,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { committeesService, Committee } from "@/api/committees";
 import { CommitteeFormModal } from "@/components/committee/CommitteeFormModal";
 import { CommitteeMembersModal } from "@/components/committee/CommitteeMembersModal";
@@ -24,6 +34,7 @@ export function CommitteesPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isMembersOpen, setIsMembersOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [committeeToDelete, setCommitteeToDelete] = useState<Committee | null>(null);
   
   // Selected committee state
   const [selectedCommittee, setSelectedCommittee] = useState<Committee | null>(null);
@@ -74,9 +85,9 @@ export function CommitteesPage() {
 
   const handleDelete = (id: string) => {
     if (!id) return;
-    if (window.confirm("Are you sure you want to delete this committee?")) {
-      deleteMutation.mutate(id);
-    }
+    deleteMutation.mutate(id, {
+      onSettled: () => setCommitteeToDelete(null),
+    });
   };
 
   return (
@@ -170,7 +181,7 @@ export function CommitteesPage() {
                         <Pencil size={18} />
                       </button>
                       <button 
-                        onClick={() => handleDelete(getCommitteeId(committee) || "")}
+                        onClick={() => setCommitteeToDelete(committee)}
                         disabled={deleteMutation.isPending}
                         className="text-destructive/80 hover:text-destructive transition-colors disabled:opacity-50"
                         title="Delete Committee"
@@ -208,6 +219,36 @@ export function CommitteesPage() {
           setSelectedCommitteeId(null);
         }}
       />
+
+      <AlertDialog
+        open={!!committeeToDelete}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCommitteeToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[95vw] max-w-md sm:w-full">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Committee</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this committee?
+              <span className="mt-2 block text-foreground">
+                This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => handleDelete(getCommitteeId(committeeToDelete!) || "")}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

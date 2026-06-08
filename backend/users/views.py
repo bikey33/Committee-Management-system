@@ -18,8 +18,10 @@ from .serializers import (
     CustomTokenObtainPairSerializer, EmployeeDetailSerializer,
     CreateUserFromEmployeeSerializer, EmployeeToUserPreviewSerializer,
     OTPVerifySerializer, OTPResendSerializer, PermissionAuditLogSerializer,
-    DirectorateSerializer, OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer
+    DirectorateSerializer, OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer,
+    SignupSerializer, SignupSMSError
 )
+from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db.models import Q
 from .tasks import send_password_reset_email, send_welcome_email
@@ -447,6 +449,8 @@ class ChangePasswordView(APIView):
             )
 
         user.set_password(new_password)
+        # Clear any forced-change flag now that the user has set their own password.
+        user.must_change_password = False
         user.save()
         return Response({'message': 'Password changed successfully.'}, status=status.HTTP_200_OK)
 
@@ -493,6 +497,81 @@ class AdminResetPasswordView(APIView):
             return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
 
+class SignupView(APIView):
+    """
+    Public self-service signup. Accepts an employee_id; if it matches an employee
+    in the directory with no account, provisions a CustomUser with a random
+    password SMSed to the employee's phone and forces a change on first login.
+    Rate limited per employee_id and per client IP to prevent SMS flooding.
+    """
+    permission_classes = [AllowAny]
+
+    SIGNUP_WINDOW_SECONDS = 10 * 60   # 10 minutes
+    # Strict per-employee cap stops flooding one person's phone. The per-IP cap
+    # is looser because many employees may share one office NAT/IP.
+    SIGNUP_MAX_PER_EMPLOYEE = 3
+    SIGNUP_MAX_PER_IP = 20
+
+    def _rate_limited(self, key, limit):
+        count = cache.get(key, 0)
+        if count >= limit:
+            return True
+        # Re-set with the window TTL each increment (sliding-ish window).
+        cache.set(key, count + 1, self.SIGNUP_WINDOW_SECONDS)
+        return False
+
+    @swagger_auto_schema(
+        tags=["Users"],
+        operation_summary="Self-service signup (public)",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={"employee_id": openapi.Schema(type=openapi.TYPE_STRING)},
+            required=["employee_id"],
+        ),
+        responses={200: "Password sent", 400: "Validation error", 429: "Too many requests"},
+    )
+    def post(self, request):
+        employee_id = str(request.data.get('employee_id', '')).strip()
+        if not employee_id:
+            return Response({"detail": "Employee ID is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate first so genuine errors (unknown ID, existing account, no phone,
+        # email already in use) return their real message and do NOT consume the
+        # rate-limit budget — only requests that will actually trigger an SMS count.
+        serializer = SignupSerializer(data={'employee_id': employee_id})
+        if not serializer.is_valid():
+            errors = serializer.errors.get('employee_id') or serializer.errors
+            detail = errors[0] if isinstance(errors, list) and errors else "Signup failed."
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Rate limit the SMS-sending path by employee_id and by client IP.
+        ip = get_client_ip(request) or 'unknown'
+        if (self._rate_limited(f"signup:{employee_id}", self.SIGNUP_MAX_PER_EMPLOYEE)
+                or self._rate_limited(f"signup_ip:{ip}", self.SIGNUP_MAX_PER_IP)):
+            return Response(
+                {"detail": "Too many signup requests. Please wait a few minutes and try again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        try:
+            serializer.save()
+        except SignupSMSError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as e:
+            logger.error(f"Signup failed for {employee_id}: {e}", exc_info=True)
+            return Response({"detail": "Signup failed. Please try again later."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        phone = getattr(serializer, 'phone', '') or ''
+        phone_hint = f"***{phone[-4:]}" if len(phone) >= 4 else "***"
+        return Response({
+            "status": "success",
+            "detail": "A temporary password has been sent to your registered phone number.",
+            "phone_hint": phone_hint,
+        }, status=status.HTTP_200_OK)
+
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -503,7 +582,10 @@ class MeView(APIView):
     )
     def get(self, request):
         serializer = UserSerializer(request.user, context={'request': request})
-        return Response(serializer.data)
+        data = dict(serializer.data)
+        # Surface the forced-password-change flag so a page refresh still enforces it.
+        data['mustChangePassword'] = request.user.must_change_password
+        return Response(data)
 
 
 class EffectivePermissionsView(APIView):

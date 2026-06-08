@@ -5,6 +5,8 @@ import { DashboardPage } from './pages/DashboardPage'
 import { OfficesPage } from './pages/OfficesPage'
 import { UsersPage } from './pages/UsersPage'
 import { LoginPage } from './pages/LoginPage'
+import { SignupPage } from './pages/SignupPage'
+import { ChangePasswordPage } from './pages/ChangePasswordPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Toaster } from 'sonner'
 
@@ -14,8 +16,10 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          
+          <Route path="/signup" element={<SignupPage />} />
+
           <Route element={<ProtectedRoute />}>
+            <Route path="/change-password" element={<ChangePasswordPage />} />
             <Route element={<DashboardLayout><Outlet /></DashboardLayout>}>
               <Route index element={<DashboardPage />} />
               <Route path="/dashboard" element={<DashboardPage />} />

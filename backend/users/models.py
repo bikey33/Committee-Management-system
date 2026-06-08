@@ -218,6 +218,40 @@ class WorkingOffice(models.Model):
         return self.name_of_office
 
 
+class ErpEmployeeRecord(models.Model):
+    """
+    Read-only mapping onto the raw ERP import table `employee_erp_record_master`.
+
+    This is a staging/source table imported from an external ERP. Django never
+    creates, migrates, or drops it (managed = False); it exists only so the
+    `sync_erp_employees` command can read it through the ORM and upsert rows
+    into EmployeeDetail (the app's working employee directory).
+    """
+    empno          = models.CharField(max_length=30, null=True, blank=True)
+    title          = models.CharField(max_length=30, null=True, blank=True)
+    first_name     = models.CharField(max_length=150, null=True, blank=True)
+    middle_names   = models.CharField(max_length=60, null=True, blank=True)
+    last_name      = models.CharField(max_length=150, null=True, blank=True)
+    dob            = models.DateField(null=True, blank=True)
+    sex            = models.CharField(max_length=80, null=True, blank=True)
+    grade          = models.CharField(max_length=240, null=True, blank=True)
+    seniority_date = models.DateField(null=True, blank=True)
+    job_id         = models.DecimalField(max_digits=15, decimal_places=0, null=True, blank=True)
+    job_name       = models.CharField(max_length=700, null=True, blank=True)
+    work_org_id    = models.CharField(max_length=150, null=True, blank=True)
+    work_office    = models.CharField(max_length=240, null=True, blank=True)
+    mobile         = models.CharField(max_length=60, null=True, blank=True)
+    email_address  = models.CharField(max_length=240, null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'employee_erp_record_master'
+        ordering = ['empno']
+
+    def __str__(self):
+        return self.empno or f"erp#{self.pk}"
+
+
 # ---------------------------------------------------------------------------
 # CustomUser
 # ---------------------------------------------------------------------------
@@ -245,6 +279,9 @@ class CustomUser(AbstractUser):
     is_active   = models.BooleanField(default=True)
     is_staff    = models.BooleanField(default=False)
     otp_enabled = models.BooleanField(default=False)
+    # Set when an account is provisioned with a system-generated password
+    # (e.g. self-service signup); forces a password change on first login.
+    must_change_password = models.BooleanField(default=False)
     reset_token = models.CharField(max_length=100, blank=True)
     last_login  = models.DateTimeField(blank=True, null=True)
 

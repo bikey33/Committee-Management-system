@@ -3,10 +3,10 @@ from celery import Celery
 
 
 # Set default Django settings for Celery workers
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cms_backend.settings')
 
 # Create Celery application
-app = Celery('config')
+app = Celery('cms_backend')
 
 # Load configuration from Django settings using the CELERY_ namespace
 app.config_from_object('django.conf:settings', namespace='CELERY')

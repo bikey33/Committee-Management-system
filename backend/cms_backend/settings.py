@@ -183,6 +183,14 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': True,
         },
+        # Celery emits noisy DEBUG output (e.g. dumps a generated def-stub for
+        # every task via head_from_fun) that floods the console under the root
+        # DEBUG logger. Keep Celery at INFO so task start/success still shows.
+        'celery': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 
@@ -244,4 +252,40 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
-CELERY_TIMEZONE = TIME_ZONE
+
+# In development there is usually no broker/worker running, so run Celery tasks
+# inline (synchronously, in-process) instead of dispatching them. This lets SMS
+# and email tasks fire during a normal request without Redis. Defaults to DEBUG;
+# set CELERY_TASK_ALWAYS_EAGER=False to force real dispatch even in dev.
+CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', default=DEBUG, cast=bool)
+CELERY_TASK_EAGER_PROPAGATES = False
+
+# SMS delivery
+# 'console' prints the message to the server terminal/log instead of calling the
+# gateway — useful for local dev where the internal NTC SMS host is unreachable.
+# 'gateway' performs the real HTTP call. Defaults to console in DEBUG.
+SMS_BACKEND = config('SMS_BACKEND', default='console' if DEBUG else 'gateway')
+SMS_API_URL = config(
+    'SMS_API_URL',
+    default='http://10.26.192.122:42399/updatedsmssender-1.0-SNAPSHOT/updatedsmssender/',
+)
+SMS_USERNAME = config('SMS_USERNAME', default='NtcSmsSender')
+SMS_PASSWORD = config('SMS_PASSWORD', default='')
+SMS_SYSTEM_ID = config('SMS_SYSTEM_ID', default='1')
+
+# Email gateway (NTC email API). Read from .env; the email sender POSTs here.
+EMAIL_API_URL = config(
+    'EMAIL_API_URL',
+    default='http://10.26.192.122:42399/updatedsmssender-1.0-SNAPSHOT/emailsender',
+)
+
+# Scheduled tasks (requires `celery -A cms_backend beat` running alongside the worker)
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    'sync-erp-employees-nightly': {
+        'task': 'users.tasks.sync_erp_employees_task',
+        # Run daily at 02:00 to refresh the EmployeeDetail directory from the ERP table.
+        'schedule': crontab(hour=2, minute=0),
+    },
+}

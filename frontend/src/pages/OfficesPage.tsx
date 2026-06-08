@@ -18,6 +18,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
+import { TablePagination } from "@/components/common/TablePagination";
+
+const PAGE_SIZE = 10;
 
 export function OfficesPage() {
   const queryClient = useQueryClient();
@@ -25,11 +28,21 @@ export function OfficesPage() {
   const [selectedOffice, setSelectedOffice] = useState<Office | null>(null);
   const [directorateName, setDirectorateName] = useState("");
   const [directorateDescription, setDirectorateDescription] = useState("");
+  const [page, setPage] = useState(1);
 
   const { data: offices, isLoading, isError } = useQuery({
     queryKey: ["offices"],
     queryFn: officesService.getAll,
   });
+
+  const totalItems = offices?.length ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  // Clamp page if the list shrank (e.g. after a delete).
+  const currentPage = Math.min(page, totalPages);
+  const pagedOffices: Office[] | undefined = offices?.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
 
   const { data: directorates = [], isLoading: directoratesLoading } = useQuery({
     queryKey: ["directorates"],
@@ -206,7 +219,7 @@ export function OfficesPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              offices?.map((office: Office) => (
+              pagedOffices?.map((office: Office) => (
                 <TableRow key={office.id}>
                   <TableCell className="font-medium text-foreground py-4">
                     {office.name}
@@ -244,9 +257,18 @@ export function OfficesPage() {
           </TableBody>
         </Table>
         </div>
+        {!isLoading && !isError && totalItems > 0 && (
+          <TablePagination
+            page={currentPage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            totalItems={totalItems}
+            pageSize={PAGE_SIZE}
+          />
+        )}
       </div>
 
-      <OfficeFormModal 
+      <OfficeFormModal
         isOpen={isFormOpen} 
         onClose={() => setIsFormOpen(false)} 
         officeToEdit={selectedOffice}

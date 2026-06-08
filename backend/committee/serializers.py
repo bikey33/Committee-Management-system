@@ -5,7 +5,8 @@ from django.db.utils import OperationalError, ProgrammingError
 from users.models import CustomUser, Office
 from procurement.models import ProcurementPlan
 import logging
-from django.db import models
+from django.db import models, transaction
+from .notifications import notify_committee_membership
 
 logger = logging.getLogger(__name__)
 
@@ -312,29 +313,31 @@ class CommitteeSerializer(serializers.ModelSerializer):
         committee_type = validated_data.get('committee_type')
         procurement_plan = validated_data.get('procurement_plan')
 
-        committee = Committee.objects.create(
-            **validated_data,
-            formation_letter=formation_letter,
-            created_by=self.context['request'].user
-        )
+        with transaction.atomic():
+            committee = Committee.objects.create(
+                **validated_data,
+                formation_letter=formation_letter,
+                created_by=self.context['request'].user
+            )
 
-        logger.debug(f"Created committee {committee.id}")
+            logger.debug(f"Created committee {committee.id}")
 
-        # Create memberships
-        for member in members:
-            # Find user by either employee_id or username
-            user = CustomUser.objects.filter(
-                models.Q(employee_id=member['employeeId']) | models.Q(username=member['employeeId'])
-            ).first()
+            # Create memberships and notify each newly-appointed member.
+            for member in members:
+                # Find user by either employee_id or username
+                user = CustomUser.objects.filter(
+                    models.Q(employee_id=member['employeeId']) | models.Q(username=member['employeeId'])
+                ).first()
 
-            if user:
-                CommitteeMembership.objects.create(
-                    committee=committee,
-                    user=user,
-                    committee_role=member.get('role', 'member')
-                )
-            else:
-                logger.warning(f"User not found for employee_id: {member['employeeId']}")
+                if user:
+                    membership = CommitteeMembership.objects.create(
+                        committee=committee,
+                        user=user,
+                        committee_role=member.get('role', 'member')
+                    )
+                    notify_committee_membership(membership)
+                else:
+                    logger.warning(f"User not found for employee_id: {member['employeeId']}")
 
         return committee
 
@@ -362,23 +365,50 @@ class CommitteeSerializer(serializers.ModelSerializer):
 
         logger.debug(f"Updated committee {instance.id}")
 
-        # Update members if provided
+        # Reconcile members incrementally rather than delete-all-recreate. This
+        # avoids re-notifying unchanged members and churning their auto-created
+        # ProcurementStakeholder rows. Per product decision, members added during
+        # an edit are NOT notified (use the Add-Member action for that); only a
+        # genuine ROLE CHANGE on an existing member triggers a notification.
         if members is not None:
-            CommitteeMembership.objects.filter(committee=instance).delete()
-            for member in members:
-                # Find user by either employee_id or username
-                user = CustomUser.objects.filter(
-                    models.Q(employee_id=member['employeeId']) | models.Q(username=member['employeeId'])
-                ).first()
+            with transaction.atomic():
+                existing = {m.user_id: m for m in instance.memberships.all()}
+                desired_user_ids = set()
 
-                if user:
-                    CommitteeMembership.objects.create(
-                        committee=instance,
-                        user=user,
-                        committee_role=member.get('role', 'member')
-                    )
-                else:
-                    logger.warning(f"User not found for employee_id: {member['employeeId']}")
+                for member in members:
+                    # Find user by either employee_id or username
+                    user = CustomUser.objects.filter(
+                        models.Q(employee_id=member['employeeId']) | models.Q(username=member['employeeId'])
+                    ).first()
+
+                    if not user:
+                        logger.warning(f"User not found for employee_id: {member['employeeId']}")
+                        continue
+
+                    desired_user_ids.add(user.pk)
+                    new_role = member.get('role', 'member')
+                    current = existing.get(user.pk)
+
+                    if current is None:
+                        # Newly added via edit — create silently (no notification).
+                        CommitteeMembership.objects.create(
+                            committee=instance,
+                            user=user,
+                            committee_role=new_role,
+                        )
+                    elif current.committee_role != new_role:
+                        # Role changed — update and notify the member.
+                        current.committee_role = new_role
+                        current.save(update_fields=['committee_role'])
+                        notify_committee_membership(current)
+                    # else: unchanged — leave as-is.
+
+                # Remove members no longer present (no notification on removal).
+                removed_user_ids = set(existing) - desired_user_ids
+                if removed_user_ids:
+                    CommitteeMembership.objects.filter(
+                        committee=instance, user_id__in=removed_user_ids
+                    ).delete()
 
             logger.debug(f"Members updated: {[m['employeeId'] for m in members]}")
 

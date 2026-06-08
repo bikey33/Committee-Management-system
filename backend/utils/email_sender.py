@@ -11,14 +11,17 @@ def send_committee_email(receiver, name, role, committee_name, policy_number, pr
     Sends an email notification to a committee member using the specified API.
     
     API Details:
-    - URL: http://10.26.192.122:8083/emailapp/emailsender
+    - URL: settings.EMAIL_API_URL (from .env)
     - Method: POST
     """
     if not receiver:
         logger.warning(f"No email address provided for user {name}. Skipping email.")
         return False
 
-    api_url = "http://10.26.192.122:8083/emailapp/emailsender"
+    api_url = getattr(settings, 'EMAIL_API_URL', '')
+    if not api_url:
+        logger.error("EMAIL_API_URL is not configured; skipping email.")
+        return False
     
     subject = f"Committee Formation - {committee_name}"
     

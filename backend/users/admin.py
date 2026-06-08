@@ -90,7 +90,11 @@ class EmployeeDetailAdmin(admin.ModelAdmin):
     search_fields = ('employee_id', 'name', 'user__email')
 
     def user_email(self, obj):
-        return obj.user.email
+        # `user` is a nullable OneToOne: ERP-imported employees have no login
+        # account yet. Fall back to the employee's own email when unlinked.
+        if obj.user_id:
+            return obj.user.email
+        return obj.email
     user_email.short_description = 'Email'
 
 

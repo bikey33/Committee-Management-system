@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from .permissions import CommitteePermission
 from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember, CommitteePhaseCheckpoint
+from .notifications import notify_committee_membership
 from procurement.models import ProcurementDocument
 from django.db.utils import OperationalError, ProgrammingError
 from .serializers import CommitteeSerializer
@@ -459,7 +460,8 @@ class AddMemberView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            CommitteeMembership.objects.create(committee=committee, user=user, committee_role=committee_role)
+            membership = CommitteeMembership.objects.create(committee=committee, user=user, committee_role=committee_role)
+            notify_committee_membership(membership)
             serializer = CommitteeSerializer(committee, context={'request': request})
             logger.debug(f"Member {employee_id} added to committee {committee_id}")
             return Response(

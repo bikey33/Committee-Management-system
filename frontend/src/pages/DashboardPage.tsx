@@ -1,7 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { committeesService } from "../api/committees";
 import type { Committee } from "../api/committees";
 import { authService } from "../api/auth";
@@ -17,6 +23,7 @@ type DashboardUser = {
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const [showCommittees, setShowCommittees] = useState(false);
 
   const { data: user } = useQuery({
     queryKey: ["userMe"],
@@ -41,6 +48,9 @@ export function DashboardPage() {
 
   const totalCommittees = committees.length;
 
+  const roleInCommittee = (committee: Committee) =>
+    committee.membersList?.find((m) => m.employeeId === employeeId)?.role;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
@@ -53,14 +63,27 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Card className="border-border/60 shadow-sm">
+        <Card
+          role="button"
+          tabIndex={0}
+          onClick={() => setShowCommittees(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setShowCommittees(true);
+            }
+          }}
+          className="cursor-pointer border-border/60 shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Committees</CardTitle>
             <ClipboardList className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">{totalCommittees}</div>
-            <p className="text-xs text-muted-foreground mt-1">Committees linked to your account</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Committees linked to your account · <span className="text-primary">click to view</span>
+            </p>
           </CardContent>
         </Card>
 
@@ -148,6 +171,56 @@ export function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={showCommittees} onOpenChange={setShowCommittees}>
+        <DialogContent className="max-h-[80vh] w-[95vw] max-w-[640px] overflow-y-auto sm:w-full">
+          <DialogHeader>
+            <DialogTitle>
+              My Committees{totalCommittees ? ` (${totalCommittees})` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {totalCommittees === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              You are not a member of any committee yet.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2 py-2">
+              {committees.map((committee: Committee) => {
+                const role = roleInCommittee(committee);
+                return (
+                  <button
+                    key={committee.id || committee._id || committee.name}
+                    type="button"
+                    onClick={() => {
+                      setShowCommittees(false);
+                      navigate("/committees");
+                    }}
+                    className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-accent"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">{committee.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground capitalize">
+                        {committee.committee_type}
+                        {committee.office_name ? ` · ${committee.office_name}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {role && (
+                        <Badge className="bg-primary/10 text-primary hover:bg-primary/10 capitalize">
+                          {role}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="capitalize">
+                        {committee.committee_status || committee.status || "active"}
+                      </Badge>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

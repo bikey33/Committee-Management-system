@@ -6,7 +6,7 @@ import secrets
 import string
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Directorate, Office, Department, Position, WorkingOffice
+from .models import CustomUser, EmployeeDetail, ErpEmployeeRecord, PermissionAuditLog, OTPLog, Role, Permission, RolePermission, Directorate, Office, Department, Position, WorkingOffice
 
 class PositionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -142,6 +142,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'designation': getattr(get_employee_profile(user), 'designation', None),
             'isActive': user.is_active,
             'otpEnabled': user.otp_enabled,
+            'mustChangePassword': user.must_change_password,
             'office': {
                 'id': user.office.id,
                 'name': user.office.name,
@@ -354,8 +355,29 @@ class UserSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def _erp_work_office_map(self):
+        """Cache the empno -> work_office map from the ERP master table once per
+        serializer instance so a user list doesn't fire one query per row."""
+        cache = getattr(self, '_erp_office_cache', None)
+        if cache is None:
+            cache = {
+                empno: office
+                for empno, office in ErpEmployeeRecord.objects
+                    .exclude(work_office__isnull=True)
+                    .exclude(work_office__exact='')
+                    .values_list('empno', 'work_office')
+                if empno
+            }
+            self._erp_office_cache = cache
+        return cache
+
     def get_working_office(self, obj):
-        return None
+        # Prefer the linked Office FK (populated by sync_erp_employees). Fall back
+        # to the raw ERP work_office for users not yet linked or without an ERP
+        # record, so the value is never blank when the data exists somewhere.
+        if obj.office_id and obj.office and obj.office.name:
+            return obj.office.name
+        return self._erp_work_office_map().get(obj.employee_id) or None
 
     def get_working_office_details(self, obj):
         return None
@@ -577,13 +599,18 @@ class CreateUserFromEmployeeSerializer(serializers.Serializer):
         else:
             password = custom_password
 
+        # Credentials are derived from the employee record: when a phone number
+        # exists, the user logs in via OTP to that number (no password to
+        # distribute). Otherwise fall back to the auto-generated password.
+        phone = employee.phone or employee.mno
+
         # Map employee fields to user fields
         user_data = {
             'employee_id': employee.employee_id,
             'email': employee.email,
             'user_role': role,
             'is_active': True,
-            'otp_enabled': False,
+            'otp_enabled': bool(phone),
             'password': password
         }
 
@@ -618,6 +645,107 @@ class CreateUserFromEmployeeSerializer(serializers.Serializer):
         """Generate a random password"""
         characters = string.ascii_letters + string.digits + "!@#$%^&*"
         return ''.join(secrets.choice(characters) for _ in range(length))
+
+
+class SignupSMSError(Exception):
+    """Raised when the signup password SMS could not be delivered."""
+
+
+class SignupSerializer(serializers.Serializer):
+    """
+    Self-service signup. The user supplies only their employee_id; if a matching
+    employee exists in the directory (and has no account yet), a login account is
+    provisioned with a random password that is SMSed to the employee's phone.
+    Login is password-based (otp_enabled=False) and the user must change the
+    password on first login (must_change_password=True).
+    """
+    employee_id = serializers.CharField(max_length=10)
+
+    DEFAULT_ROLE_NAME = 'Member'
+
+    def validate_employee_id(self, value):
+        value = value.strip()
+        try:
+            employee = EmployeeDetail.objects.get(employee_id=value)
+        except EmployeeDetail.DoesNotExist:
+            raise serializers.ValidationError("No employee record found for this Employee ID.")
+        if CustomUser.objects.filter(employee_id=value).exists():
+            raise serializers.ValidationError(
+                "An account already exists for this Employee ID. Please log in or reset your password."
+            )
+        if not (employee.phone or employee.mno):
+            raise serializers.ValidationError(
+                "No phone number is on file for this employee. Please contact the administrator."
+            )
+        if not employee.email:
+            raise serializers.ValidationError(
+                "No email address is on file for this employee. Please contact the administrator."
+            )
+        # The email is unique across login accounts; if another account already
+        # uses it, this employee cannot self-register (they likely already have
+        # an account under a different Employee ID).
+        if CustomUser.objects.filter(email=employee.email).exists():
+            raise serializers.ValidationError(
+                "An account using this employee's email already exists. Please log in "
+                "with that account or contact the administrator."
+            )
+        return value
+
+    def _generate_random_password(self, length=12):
+        characters = string.ascii_letters + string.digits + "!@#$%^&*"
+        return ''.join(secrets.choice(characters) for _ in range(length))
+
+    def create(self, validated_data):
+        from .tasks import send_sms_task
+
+        employee_id = validated_data['employee_id']
+        employee = EmployeeDetail.objects.get(employee_id=employee_id)
+        phone = employee.phone or employee.mno
+        role = Role.objects.filter(name=self.DEFAULT_ROLE_NAME).first()
+        password = self._generate_random_password()
+        sms_message = (
+            f"Your PMS account has been created. Temporary password: {password}. "
+            f"Log in with your Employee ID and change your password on first login."
+        )
+
+        with transaction.atomic():
+            user = CustomUser.objects.create_user(
+                employee_id=employee.employee_id,
+                email=employee.email,
+                password=password,
+                user_role=role,
+                is_active=True,
+                otp_enabled=False,
+                must_change_password=True,
+            )
+            EmployeeDetail.objects.update_or_create(
+                employee_id=employee.employee_id,
+                defaults={
+                    'user': user,
+                    'email': employee.email,
+                    'name': employee.name or '',
+                    'phone': employee.phone or employee.mno or '',
+                    'mno': employee.mno or employee.phone or '',
+                    'department': employee.department or employee.group or '',
+                    'designation': employee.designation or employee.position or '',
+                    'position': employee.position or '',
+                    'service': employee.service or '',
+                    'group': employee.group or '',
+                    'qualification': employee.qualification or '',
+                    'seniority': employee.seniority,
+                    'retirement': employee.retirement,
+                },
+            )
+            # Deliver the password by SMS asynchronously via Celery. Enqueue only
+            # after the transaction commits so a rolled-back signup never triggers
+            # an SMS for an account that doesn't exist. Delivery (and any retries)
+            # happen in the background; the account is created regardless.
+            transaction.on_commit(
+                lambda: send_sms_task.delay(phone, sms_message)
+            )
+
+        self.phone = phone
+        return user
 
 
 class EmployeeToUserPreviewSerializer(serializers.ModelSerializer):

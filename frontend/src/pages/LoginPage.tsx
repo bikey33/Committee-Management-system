@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,9 +22,13 @@ export function LoginPage() {
 
     setIsLoading(true);
     try {
-      await authService.login(employeeId, password);
+      const data = await authService.login(employeeId, password);
       toast.success("Login successful!");
-      navigate("/");
+      if (data?.user?.mustChangePassword) {
+        navigate("/change-password");
+      } else {
+        navigate("/");
+      }
     } catch (error: any) {
       toast.error(
         error.response?.data?.detail || "Login failed. Please check your credentials."
@@ -78,6 +82,13 @@ export function LoginPage() {
             {isLoading ? "Signing in..." : "Sign In"}
           </Button>
         </form>
+
+        <p className="text-center text-sm text-muted-foreground mt-6">
+          Don't have an account?{" "}
+          <Link to="/signup" className="font-medium text-primary hover:underline">
+            Sign up
+          </Link>
+        </p>
       </div>
     </div>
   );

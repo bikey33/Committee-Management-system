@@ -7,16 +7,12 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from .models import CommitteeMembership
 from procurement.models import ProcurementStakeholder
-from .tasks import send_committee_notification_task # Added
 
 logger = logging.getLogger(__name__)
 
-@receiver(post_save, sender=CommitteeMembership)
-def notify_member_on_committee_join(sender, instance, created, **kwargs):
-    """
-    Disabled per user request to simplify the system and avoid Celery connection errors.
-    """
-    return
+# Member appointment notifications (SMS + email) are dispatched explicitly from the
+# create / add-member / role-change code paths via committee.notifications, not from a
+# signal — see committee/notifications.py for the rationale.
 
 
 @receiver(post_save, sender=CommitteeMembership)
