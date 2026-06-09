@@ -1,5 +1,23 @@
 import { apiClient } from "./client";
 
+export interface CommitteeCheckpoint {
+  id?: number;
+  name?: string;
+  phase?: string;
+  is_completed?: boolean;
+  order?: number;
+}
+
+export interface CommitteePhase {
+  phase: string;
+  name: string;
+  order: number;
+  completed: boolean;
+  visible: boolean;
+  checkpoints: CommitteeCheckpoint[];
+  completion_percentage: number;
+}
+
 export interface Committee {
   id: string;
   _id?: string;
@@ -15,6 +33,10 @@ export interface Committee {
   office_name?: string;
   formationLetterURL?: string;
   membersList?: { employeeId: string; name: string; role: string }[];
+  current_phase?: string;
+  phases?: CommitteePhase[];
+  initialization_phase_completed?: boolean;
+  finalization_phase_completed?: boolean;
 }
 
 export const committeesService = {

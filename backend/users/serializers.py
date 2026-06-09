@@ -183,7 +183,9 @@ class DirectorateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Directorate
-        fields = ['id', 'name', 'code', 'description', 'office_count', 'created_at', 'updated_at']
+        # `code` was removed from the Directorate model (migration 0006); listing it
+        # here made the serializer raise ImproperlyConfigured whenever a row existed.
+        fields = ['id', 'name', 'description', 'office_count', 'created_at', 'updated_at']
 
     def get_office_count(self, obj):
         return obj.offices.count()
@@ -541,11 +543,46 @@ class ResetPasswordSerializer(serializers.Serializer):
 class EmployeeDetailSerializer(serializers.ModelSerializer):
     user_employee_id = serializers.CharField(source='user.employee_id', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
+    has_user_account = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeDetail
-        fields = ['employee_id', 'user_employee_id', 'user_email', 'name', 'email', 'phone', 'position', 'level', 'service',
+        fields = ['employee_id', 'user_employee_id', 'user_email', 'has_user_account', 'name', 'email', 'phone', 'position', 'level', 'service',
                   'group', 'qualification', 'seniority', 'retirement', 'mno', 'department', 'designation']
+
+    def get_has_user_account(self, obj):
+        return obj.user_id is not None
+
+
+class EmployeeWriteSerializer(serializers.ModelSerializer):
+    """Create/update serializer for EmployeeDetail (manual employee management).
+
+    Employees are distinct from user accounts — `user` is intentionally not
+    writable here. `employee_id` is the primary key: settable on create, locked
+    on update. Email uniqueness is enforced by the model.
+    """
+    class Meta:
+        model = EmployeeDetail
+        fields = ['employee_id', 'name', 'email', 'phone', 'mno', 'position', 'level',
+                  'service', 'group', 'qualification', 'seniority', 'retirement',
+                  'department', 'designation']
+
+    def validate_employee_id(self, value):
+        value = (value or '').strip()
+        if not value:
+            raise serializers.ValidationError("Employee ID is required.")
+        # On create, the ID must be unique. On update it's read-only (see below),
+        # so this only guards creation.
+        if self.instance is None and EmployeeDetail.objects.filter(employee_id=value).exists():
+            raise serializers.ValidationError("An employee with this Employee ID already exists.")
+        return value
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # The primary key cannot change on update.
+        if self.instance is not None:
+            fields['employee_id'].read_only = True
+        return fields
 
 
 class CreateUserFromEmployeeSerializer(serializers.Serializer):

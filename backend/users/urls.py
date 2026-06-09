@@ -1,10 +1,11 @@
 # backend/users/urls.py
 from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, UserListView, UserProfileView, MeView,
     RoleListView, RoleCreateView, RoleUpdateView, RoleDeleteView, RolePermissionsView,
     ForgotPasswordView, ResetPasswordView, OTPPasswordResetView, UserDetailView, EmployeeByIdView, EmployeeDetailListView,
-    ValidateEmployeeDetailView, CustomTokenObtainPairView,
+    ValidateEmployeeDetailView, EmployeeCreateView, EmployeeUpdateView, CustomTokenObtainPairView,
     CreateUserFromEmployeeView, EmployeeToUserPreviewView, AvailableEmployeesForUserCreationView,
     OTPVerifyView, OTPResendView, AvailablePermissionsView, PermissionAuditLogListView,
     EffectivePermissionsView, ChangePasswordView, AdminResetPasswordView, SignupView,
@@ -16,6 +17,7 @@ from .views import (
 urlpatterns = [
     path('positions/', PositionListView.as_view(), name='position-list'),
     path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('otp-verify/', OTPVerifyView.as_view(), name='otp-verify'),
     path('otp-resend/', OTPResendView.as_view(), name='otp-resend'),
     path('register/', RegisterView.as_view(), name='register'),
@@ -43,6 +45,8 @@ urlpatterns = [
     path('permissions/', AvailablePermissionsView.as_view(), name='permissions-available'),
     path('permissions/audit/', PermissionAuditLogListView.as_view(), name='permissions-audit'),
     path('employee-details/', EmployeeDetailListView.as_view(), name='employee-detail-list'),
+    path('employee-details/create/', EmployeeCreateView.as_view(), name='employee-detail-create'),
+    path('employee-details/<str:employee_id>/', EmployeeUpdateView.as_view(), name='employee-detail-update'),
     path('validate-employee/', ValidateEmployeeDetailView.as_view(), name='validate-employee'),
     
     path('employees/preview-user/<str:employee_id>/', EmployeeToUserPreviewView.as_view(), name='employee-to-user-preview'),

@@ -8,6 +8,7 @@ from rest_framework import status, generics
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.core.mail import send_mail
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.http import JsonResponse
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -15,7 +16,7 @@ from .models import CustomUser, EmployeeDetail, PermissionAuditLog, OTPLog, Role
 from .serializers import (
     RegisterSerializer, UserSerializer, RoleSerializer, PermissionSerializer,
     ForgotPasswordSerializer, ResetPasswordSerializer, EmployeeByIdSerializer,
-    CustomTokenObtainPairSerializer, EmployeeDetailSerializer,
+    CustomTokenObtainPairSerializer, EmployeeDetailSerializer, EmployeeWriteSerializer,
     CreateUserFromEmployeeSerializer, EmployeeToUserPreviewSerializer,
     OTPVerifySerializer, OTPResendSerializer, PermissionAuditLogSerializer,
     DirectorateSerializer, OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer,
@@ -43,6 +44,23 @@ def get_client_ip(request):
     if forwarded_for:
         return forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
+
+
+def resolve_user_phone(user):
+    """Return a user's phone number from their EmployeeDetail, or None.
+
+    CustomUser has no phone field — it lives on the linked EmployeeDetail
+    (`phone`, falling back to `mno`). The reverse OneToOne raises
+    ObjectDoesNotExist (not AttributeError) when no profile exists, so a plain
+    getattr would not catch it.
+    """
+    try:
+        profile = user.employee_profile
+    except ObjectDoesNotExist:
+        return None
+    if not profile:
+        return None
+    return (profile.phone or profile.mno or '').strip() or None
 
 
 
@@ -258,7 +276,7 @@ class OTPResendView(APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
 
-        phone_number = getattr(user, 'phone', None)
+        phone_number = resolve_user_phone(user)
         if not phone_number:
             return Response(
                 {'detail': 'No phone number registered.'},
@@ -968,7 +986,7 @@ class ForgotPasswordView(APIView):
             except CustomUser.DoesNotExist:
                 return Response({'detail': 'User with this Employee ID does not exist.'}, status=status.HTTP_404_NOT_FOUND)
 
-            phone_number = getattr(user, 'phone', None)
+            phone_number = resolve_user_phone(user)
             if not phone_number:
                 return Response({'detail': 'No phone number registered for this user. Please contact admin.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1176,6 +1194,38 @@ class EmployeeDetailListView(generics.ListAPIView):
             'previous': page_obj.previous_page_number() if page_obj.has_previous() else None,
             'results': serializer.data
         }, status=status.HTTP_200_OK)
+
+
+class EmployeeCreateView(generics.CreateAPIView):
+    """POST /employee-details/create/ — manually create an employee record."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = EmployeeWriteSerializer
+
+    def create(self, request, *args, **kwargs):
+        if not (is_superadmin(request.user) or request.user.has_rbac_permission('users.manage')):
+            return Response(
+                {"detail": "You do not have permission to create employees."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().create(request, *args, **kwargs)
+
+
+class EmployeeUpdateView(generics.UpdateAPIView):
+    """PATCH/PUT /employee-details/<employee_id>/ — update an employee record."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = EmployeeWriteSerializer
+    queryset = EmployeeDetail.objects.all()
+    lookup_field = 'employee_id'
+
+    def update(self, request, *args, **kwargs):
+        if not (is_superadmin(request.user) or request.user.has_rbac_permission('users.manage')):
+            return Response(
+                {"detail": "You do not have permission to update employees."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # Default to partial updates so the frontend can send only changed fields.
+        kwargs['partial'] = True
+        return super().update(request, *args, **kwargs)
 
 
 class ValidateEmployeeDetailView(APIView):

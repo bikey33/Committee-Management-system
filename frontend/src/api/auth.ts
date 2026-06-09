@@ -2,6 +2,16 @@ import { apiClient } from "./client";
 
 const MUST_CHANGE_KEY = "must_change_password";
 
+// Persist tokens + the forced-password-change flag from a successful auth
+// response (shared by password login and OTP verification).
+const persistSession = (data: any) => {
+  const { access, refresh } = data || {};
+  if (access) localStorage.setItem("access_token", access);
+  if (refresh) localStorage.setItem("refresh_token", refresh);
+  const mustChange = !!data?.user?.mustChangePassword;
+  localStorage.setItem(MUST_CHANGE_KEY, String(mustChange));
+};
+
 export const authService = {
   login: async (employee_id: string, password: string) => {
     // The backend uses employee_id as the primary identifier instead of username
@@ -10,16 +20,29 @@ export const authService = {
       password,
     });
 
-    const { access, refresh } = response.data;
+    // When OTP is enabled the backend returns { otp_required, user_id, phone_hint }
+    // (HTTP 200, no tokens). In that case we don't persist a session — the caller
+    // must complete verifyOtp(). Otherwise persist the issued tokens.
+    if (!response.data?.otp_required) {
+      persistSession(response.data);
+    }
 
-    // Store tokens
-    if (access) localStorage.setItem("access_token", access);
-    if (refresh) localStorage.setItem("refresh_token", refresh);
+    return response.data;
+  },
 
-    // Remember whether the user must change their password on first login.
-    const mustChange = !!response.data?.user?.mustChangePassword;
-    localStorage.setItem(MUST_CHANGE_KEY, String(mustChange));
+  // Complete an OTP challenge started by login(): exchange the code for tokens.
+  verifyOtp: async (user_id: string, otp: string) => {
+    const response = await apiClient.post("/api/users/otp-verify/", {
+      user_id,
+      otp,
+    });
+    persistSession(response.data);
+    return response.data;
+  },
 
+  // Resend the login OTP to the user's registered phone.
+  resendOtp: async (user_id: string) => {
+    const response = await apiClient.post("/api/users/otp-resend/", { user_id });
     return response.data;
   },
 

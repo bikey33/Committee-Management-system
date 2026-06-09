@@ -13,6 +13,7 @@ import type { Committee } from "../api/committees";
 import { authService } from "../api/auth";
 import { useNavigate } from "react-router-dom";
 import { CalendarDays, Users, ClipboardList, ArrowRight } from "lucide-react";
+import CommitteeDetailModal from "../components/committee/CommitteeDetailModal";
 
 type DashboardUser = {
   employeeId?: string;
@@ -24,6 +25,7 @@ type DashboardUser = {
 export function DashboardPage() {
   const navigate = useNavigate();
   const [showCommittees, setShowCommittees] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const { data: user } = useQuery({
     queryKey: ["userMe"],
@@ -192,8 +194,10 @@ export function DashboardPage() {
                     key={committee.id || committee._id || committee.name}
                     type="button"
                     onClick={() => {
+                      const cid = committee.id || committee._id;
+                      if (!cid) return;
                       setShowCommittees(false);
-                      navigate("/committees");
+                      setDetailId(String(cid));
                     }}
                     className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-accent"
                   >
@@ -221,6 +225,12 @@ export function DashboardPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <CommitteeDetailModal
+        id={detailId}
+        isOpen={!!detailId}
+        onClose={() => setDetailId(null)}
+      />
     </div>
   );
 }

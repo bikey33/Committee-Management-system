@@ -1,5 +1,5 @@
 import React from "react";
-import { Building2, Users, User, LayoutDashboard, LogOut } from "lucide-react";
+import { Building2, Users, User, Contact, LayoutDashboard, LogOut } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { authService } from "@/api/auth";
@@ -70,6 +70,19 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           >
             <Users size={20} />
             <span>Committees</span>
+          </NavLink>
+          <NavLink
+            to="/employees"
+            className={({ isActive }) =>
+              `flex shrink-0 items-center gap-3 rounded-md px-3 py-2 transition-colors ${
+                isActive
+                  ? "bg-primary text-primary-foreground font-medium"
+                  : "hover:bg-accent hover:text-accent-foreground font-medium text-sidebar-foreground"
+              }`
+            }
+          >
+            <Contact size={20} />
+            <span>Employees</span>
           </NavLink>
           <NavLink
             to="/users"

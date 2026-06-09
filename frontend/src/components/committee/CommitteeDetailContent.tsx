@@ -8,7 +8,7 @@ import { apiClient } from "@/api/client";
 import { cn } from "@/lib/utils";
 import { getRoleConfig } from "@/config/committeeRoleConfig";
 import type { Committee } from "@/api/committees";
-import PhaseIndicator from "./PhaseIndicator";
+import CommitteeStepper from "./CommitteeStepper";
 import FinalizationSection from "./FinalizationSection";
 import {
   Building2,
@@ -204,18 +204,8 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-6 bg-slate-50/10 sm:p-6 lg:p-8 lg:space-y-8">
-        {/* Phase Indicator */}
-        {committee.phases && committee.phases.length > 0 && (
-          <PhaseIndicator
-            phases={committee.phases.map((phase: any) => ({
-              phase: phase.phase,
-              name: phase.name,
-              status: phase.completed ? `Completed 5/15/2026` : phase.phase === 'initialization' ? 'In Progress' : 'Submit report',
-              visible: phase.visible !== false
-            }))}
-            initializationComplete={committee.initialization_phase_completed}
-          />
-        )}
+        {/* Committee progress stepper */}
+        <CommitteeStepper committee={committee} />
 
         {/* Phase 1 - Initialization */}
         <div className="space-y-4">
