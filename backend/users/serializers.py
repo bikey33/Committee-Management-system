@@ -72,10 +72,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 )
 
             # Send OTP via NTC service
-            otp_result = ntc_send_otp(
-                phone_number,
-                message=f"Dear User, your PMS login code is <OTP>. Valid for 5 minutes."
-            )
+            otp_result = ntc_send_otp(phone_number)
 
             if not otp_result['success']:
                 logger.error(f"Failed to send OTP to {user.employee_id}: {otp_result['error']}")
@@ -103,7 +100,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             OTPLog.objects.create(
                 user=user,
                 phone=phone_number,
-                seq_no=otp_result['seq_no'],
+                seq_no=otp_result['transaction_id'],
                 purpose='login',
                 status='sent',
                 ip_address=ip_address,
@@ -684,76 +681,78 @@ class CreateUserFromEmployeeSerializer(serializers.Serializer):
         return ''.join(secrets.choice(characters) for _ in range(length))
 
 
-class SignupSMSError(Exception):
-    """Raised when the signup password SMS could not be delivered."""
+DEFAULT_SIGNUP_ROLE_NAME = 'Member'
+
+
+def _validate_signup_employee(value):
+    """Shared validation for self-signup: the employee must exist, have no
+    account yet, and have a phone (for OTP) and a unique email (for the account).
+    Returns the cleaned employee_id."""
+    value = (value or '').strip()
+    try:
+        employee = EmployeeDetail.objects.get(employee_id=value)
+    except EmployeeDetail.DoesNotExist:
+        raise serializers.ValidationError("No employee record found for this Employee ID.")
+    if CustomUser.objects.filter(employee_id=value).exists():
+        raise serializers.ValidationError(
+            "An account already exists for this Employee ID. Please log in or reset your password."
+        )
+    if not (employee.phone or employee.mno):
+        raise serializers.ValidationError(
+            "No phone number is on file for this employee. Please contact the administrator."
+        )
+    if not employee.email:
+        raise serializers.ValidationError(
+            "No email address is on file for this employee. Please contact the administrator."
+        )
+    if CustomUser.objects.filter(email=employee.email).exists():
+        raise serializers.ValidationError(
+            "An account using this employee's email already exists. Please log in "
+            "with that account or contact the administrator."
+        )
+    return value
 
 
 class SignupSerializer(serializers.Serializer):
     """
-    Self-service signup. The user supplies only their employee_id; if a matching
-    employee exists in the directory (and has no account yet), a login account is
-    provisioned with a random password that is SMSed to the employee's phone.
-    Login is password-based (otp_enabled=False) and the user must change the
-    password on first login (must_change_password=True).
+    Step 1 of self-service signup: validate the employee_id. The view then sends
+    an OTP to the employee's registered phone. No account is created at this step.
     """
     employee_id = serializers.CharField(max_length=10)
 
-    DEFAULT_ROLE_NAME = 'Member'
+    def validate_employee_id(self, value):
+        return _validate_signup_employee(value)
+
+
+class SignupVerifySerializer(serializers.Serializer):
+    """
+    Step 2 of self-service signup: verify the OTP and let the user set their own
+    password. The account is created here (active, password chosen by the user,
+    no forced first-login change).
+    """
+    employee_id = serializers.CharField(max_length=10)
+    otp = serializers.CharField(min_length=4, max_length=8)
+    password = serializers.CharField(min_length=8, max_length=128, write_only=True)
+
+    DEFAULT_ROLE_NAME = DEFAULT_SIGNUP_ROLE_NAME
 
     def validate_employee_id(self, value):
-        value = value.strip()
-        try:
-            employee = EmployeeDetail.objects.get(employee_id=value)
-        except EmployeeDetail.DoesNotExist:
-            raise serializers.ValidationError("No employee record found for this Employee ID.")
-        if CustomUser.objects.filter(employee_id=value).exists():
-            raise serializers.ValidationError(
-                "An account already exists for this Employee ID. Please log in or reset your password."
-            )
-        if not (employee.phone or employee.mno):
-            raise serializers.ValidationError(
-                "No phone number is on file for this employee. Please contact the administrator."
-            )
-        if not employee.email:
-            raise serializers.ValidationError(
-                "No email address is on file for this employee. Please contact the administrator."
-            )
-        # The email is unique across login accounts; if another account already
-        # uses it, this employee cannot self-register (they likely already have
-        # an account under a different Employee ID).
-        if CustomUser.objects.filter(email=employee.email).exists():
-            raise serializers.ValidationError(
-                "An account using this employee's email already exists. Please log in "
-                "with that account or contact the administrator."
-            )
-        return value
-
-    def _generate_random_password(self, length=12):
-        characters = string.ascii_letters + string.digits + "!@#$%^&*"
-        return ''.join(secrets.choice(characters) for _ in range(length))
+        return _validate_signup_employee(value)
 
     def create(self, validated_data):
-        from .tasks import send_sms_task
-
         employee_id = validated_data['employee_id']
         employee = EmployeeDetail.objects.get(employee_id=employee_id)
-        phone = employee.phone or employee.mno
         role = Role.objects.filter(name=self.DEFAULT_ROLE_NAME).first()
-        password = self._generate_random_password()
-        sms_message = (
-            f"Your PMS account has been created. Temporary password: {password}. "
-            f"Log in with your Employee ID and change your password on first login."
-        )
 
         with transaction.atomic():
             user = CustomUser.objects.create_user(
                 employee_id=employee.employee_id,
                 email=employee.email,
-                password=password,
+                password=validated_data['password'],
                 user_role=role,
                 is_active=True,
                 otp_enabled=False,
-                must_change_password=True,
+                must_change_password=False,
             )
             EmployeeDetail.objects.update_or_create(
                 employee_id=employee.employee_id,
@@ -773,15 +772,6 @@ class SignupSerializer(serializers.Serializer):
                     'retirement': employee.retirement,
                 },
             )
-            # Deliver the password by SMS asynchronously via Celery. Enqueue only
-            # after the transaction commits so a rolled-back signup never triggers
-            # an SMS for an account that doesn't exist. Delivery (and any retries)
-            # happen in the background; the account is created regardless.
-            transaction.on_commit(
-                lambda: send_sms_task.delay(phone, sms_message)
-            )
-
-        self.phone = phone
         return user
 
 

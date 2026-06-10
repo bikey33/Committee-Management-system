@@ -14,6 +14,7 @@
     --popover-foreground: 222.2 84% 4.9%;
 
     --primary: 209 100% 32%;
+    --primary-hover: 209 100% 28%;
     --primary-foreground: 0 0% 98%;
 
     --secondary: 210 40% 96.1%;
@@ -104,6 +105,41 @@
   --header-bg: 209 100% 32%;
   --header-foreground: 0 0% 98%;
 
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark-mode utility overrides (nt-frontend.md §3B).
+ * Many pages/components use hardcoded light utilities (bg-white, slate-*) that
+ * don't adapt to dark mode. Map them to semantic theme variables inside .dark
+ * so the whole app themes consistently without rewriting every class.
+ * ------------------------------------------------------------------------- */
+.dark .bg-white { background-color: hsl(var(--card)) !important; }
+.dark .bg-slate-50,
+.dark .bg-slate-100,
+.dark .bg-slate-50\/10,
+.dark .bg-slate-50\/50 { background-color: hsl(var(--muted)) !important; }
+
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700 { color: hsl(var(--foreground)) !important; }
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400,
+.dark .text-slate-300 { color: hsl(var(--muted-foreground)) !important; }
+
+.dark .border-slate-50,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300 { border-color: hsl(var(--border)) !important; }
+
+/* Table headers: brand blue in light, card surface in dark (§3B). */
+.dark thead,
+.dark thead th { background-color: hsl(var(--card)) !important; color: hsl(var(--foreground)) !important; }
+
+/* Glassmorphism in dark (§3B). */
+.dark .glass-card {
+  background: rgba(15, 23, 42, 0.6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Added from duty-chart design system */

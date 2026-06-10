@@ -46,10 +46,20 @@ export const authService = {
     return response.data;
   },
 
-  // Self-service signup: provision an account from the employee directory.
-  // The backend SMSes a temporary password to the employee's registered phone.
+  // Self-service signup step 1: request an OTP to the employee's registered phone.
   signup: async (employee_id: string) => {
     const response = await apiClient.post("/api/users/signup/", { employee_id });
+    return response.data;
+  },
+
+  // Self-service signup step 2: verify the OTP and set the chosen password.
+  // Creates the account; the user then logs in normally.
+  signupVerify: async (employee_id: string, otp: string, password: string) => {
+    const response = await apiClient.post("/api/users/signup/verify/", {
+      employee_id,
+      otp,
+      password,
+    });
     return response.data;
   },
 

@@ -8,27 +8,72 @@ import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
 
 export function SignupPage() {
-  const [employeeId, setEmployeeId] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [sentHint, setSentHint] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const handleSignup = async (e: React.FormEvent) => {
+  const [step, setStep] = useState<"employee" | "verify">("employee");
+  const [employeeId, setEmployeeId] = useState("");
+  const [phoneHint, setPhoneHint] = useState("");
+  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const requestOtp = async () => {
+    const data = await authService.signup(employeeId.trim());
+    setPhoneHint(data?.phone_hint || "");
+    setStep("verify");
+    setOtp("");
+    toast.success(data?.detail || "A verification code has been sent to your phone.");
+  };
+
+  const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!employeeId.trim()) {
       toast.error("Please enter your Employee ID");
       return;
     }
-
     setIsLoading(true);
     try {
-      const data = await authService.signup(employeeId.trim());
-      setSentHint(data?.phone_hint || null);
-      toast.success("A temporary password has been sent to your phone.");
+      await requestOtp();
     } catch (error: any) {
-      toast.error(
-        error.response?.data?.detail || "Signup failed. Please try again."
-      );
+      toast.error(error.response?.data?.detail || "Signup failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setIsLoading(true);
+    try {
+      await requestOtp();
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || "Could not resend the code.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otp.trim()) {
+      toast.error("Please enter the verification code");
+      return;
+    }
+    if (password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await authService.signupVerify(employeeId.trim(), otp.trim(), password);
+      toast.success("Account created! Please log in with your new password.");
+      navigate("/login");
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || "Verification failed. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -41,25 +86,18 @@ export function SignupPage() {
           <div className="bg-primary text-primary-foreground p-3 rounded-xl mb-4 shadow-sm">
             <UserPlus size={28} />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Create your account</h1>
+          <h1 className="text-2xl font-bold text-foreground">
+            {step === "employee" ? "Create your account" : "Verify & set password"}
+          </h1>
           <p className="text-muted-foreground text-sm mt-1 text-center">
-            Enter your Employee ID. We'll text a temporary password to your registered phone.
+            {step === "employee"
+              ? "Enter your Employee ID. We'll send a verification code to your registered phone."
+              : `Enter the code sent to ${phoneHint || "your phone"} and choose a password.`}
           </p>
         </div>
 
-        {sentHint !== null ? (
-          <div className="space-y-4 text-center">
-            <div className="rounded-md border bg-green-50 p-4 text-sm text-green-800">
-              A temporary password has been sent to your phone
-              {sentHint ? ` (${sentHint})` : ""}. Use it to log in, then set a new
-              password.
-            </div>
-            <Button className="w-full" onClick={() => navigate("/login")}>
-              Go to Login
-            </Button>
-          </div>
-        ) : (
-          <form onSubmit={handleSignup} className="space-y-4">
+        {step === "employee" ? (
+          <form onSubmit={handleRequest} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="employeeId">Employee ID</Label>
               <Input
@@ -76,8 +114,71 @@ export function SignupPage() {
               className="w-full bg-primary hover:bg-primary/90 mt-6"
               disabled={isLoading}
             >
-              {isLoading ? "Sending..." : "Send Password"}
+              {isLoading ? "Sending code..." : "Send Verification Code"}
             </Button>
+          </form>
+        ) : (
+          <form onSubmit={handleVerify} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="otp">Verification Code</Label>
+              <Input
+                id="otp"
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                placeholder="Enter the code"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">New Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="At least 8 characters"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:bg-primary/90 mt-2"
+              disabled={isLoading}
+            >
+              {isLoading ? "Creating account..." : "Create Account"}
+            </Button>
+            <div className="flex items-center justify-between text-sm">
+              <button
+                type="button"
+                onClick={() => setStep("employee")}
+                className="font-medium text-muted-foreground hover:underline cursor-pointer"
+                disabled={isLoading}
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={handleResend}
+                className="font-medium text-primary hover:underline cursor-pointer disabled:opacity-50"
+                disabled={isLoading}
+              >
+                Resend code
+              </button>
+            </div>
           </form>
         )}
 

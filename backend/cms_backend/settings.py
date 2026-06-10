@@ -245,6 +245,29 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@procurement.c
 # Password Reset Settings
 PASSWORD_RESET_TIMEOUT = 3600  # 1 hour in seconds
 
+# Cache configuration
+# A SHARED cache is required in production: signup OTP sessions (seq_no) and
+# signup/OTP rate limits are read across requests and must be consistent across
+# all gunicorn/uvicorn workers. Point CACHE_URL at Redis (uses a separate DB
+# index from the Celery broker on /0). In production it defaults to Redis;
+# in dev it falls back to in-process LocMemCache so the app runs without Redis.
+CACHE_URL = config('CACHE_URL', default='' if DEBUG else 'redis://localhost:6379/1')
+if CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': CACHE_URL,
+            'KEY_PREFIX': 'pms',
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'pms-locmem',
+        }
+    }
+
 # Celery configuration
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
@@ -278,6 +301,11 @@ EMAIL_API_URL = config(
     'EMAIL_API_URL',
     default='http://10.26.192.122:42399/updatedsmssender-1.0-SNAPSHOT/emailsender',
 )
+
+# NTC OTP service (used for login OTP and signup phone verification).
+# Read from .env so the deployed host is honored instead of a hardcoded default.
+NTC_OTP_BASE_URL = config('NTC_OTP_BASE_URL', default='http://10.26.192.122:8083')
+NTC_OTP_TIMEOUT = config('NTC_OTP_TIMEOUT', default=10, cast=int)
 
 # Scheduled tasks (requires `celery -A cms_backend beat` running alongside the worker)
 from celery.schedules import crontab  # noqa: E402

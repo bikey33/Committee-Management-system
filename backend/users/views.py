@@ -20,7 +20,7 @@ from .serializers import (
     CreateUserFromEmployeeSerializer, EmployeeToUserPreviewSerializer,
     OTPVerifySerializer, OTPResendSerializer, PermissionAuditLogSerializer,
     DirectorateSerializer, OfficeSerializer, DepartmentSerializer, PositionSerializer, WorkingOfficeSerializer,
-    SignupSerializer, SignupSMSError
+    SignupSerializer, SignupVerifySerializer
 )
 from django.core.cache import cache
 from django.core.paginator import Paginator
@@ -170,11 +170,11 @@ class OTPVerifyView(APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
 
-        # Validate via NTC service
+        # Validate via NTC service (transactionId stored in seq_no, mobile in phone)
         logger.info(
-            f"OTP verify attempt: user={user_id}, seq_no={otp_log.seq_no}, otp_length={len(str(otp_code))}"
+            f"OTP verify attempt: user={user_id}, txn={otp_log.seq_no}, otp_length={len(str(otp_code))}"
         )
-        result = ntc_validate_otp(otp_log.seq_no, otp_code)
+        result = ntc_validate_otp(otp_log.seq_no, otp_code, otp_log.phone)
 
         if result['success']:
             otp_log.status = 'verified'
@@ -287,10 +287,7 @@ class OTPResendView(APIView):
         OTPLog.objects.filter(user=user, status='sent').update(status='invalidated')
 
         # Send new OTP
-        otp_result = ntc_send_otp(
-            phone_number,
-            message=f"Dear User, your PMS login code is <OTP>. Valid for {expiry_minutes} minutes."
-        )
+        otp_result = ntc_send_otp(phone_number)
 
         if not otp_result['success']:
             return Response(
@@ -305,7 +302,7 @@ class OTPResendView(APIView):
         OTPLog.objects.create(
             user=user,
             phone=phone_number,
-            seq_no=otp_result['seq_no'],
+            seq_no=otp_result['transaction_id'],
             purpose='login',
             status='sent',
             ip_address=ip_address,
@@ -538,15 +535,22 @@ class SignupView(APIView):
         cache.set(key, count + 1, self.SIGNUP_WINDOW_SECONDS)
         return False
 
+    # Signup OTP session: seq_no cached per employee_id between request & verify.
+    SIGNUP_OTP_TTL_SECONDS = 10 * 60  # 10 minutes
+
+    @staticmethod
+    def _signup_otp_cache_key(employee_id):
+        return f"signup_otp:{employee_id}"
+
     @swagger_auto_schema(
         tags=["Users"],
-        operation_summary="Self-service signup (public)",
+        operation_summary="Self-service signup — request OTP (public)",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={"employee_id": openapi.Schema(type=openapi.TYPE_STRING)},
             required=["employee_id"],
         ),
-        responses={200: "Password sent", 400: "Validation error", 429: "Too many requests"},
+        responses={200: "OTP sent", 400: "Validation error", 429: "Too many requests", 502: "OTP gateway error"},
     )
     def post(self, request):
         employee_id = str(request.data.get('employee_id', '')).strip()
@@ -556,14 +560,14 @@ class SignupView(APIView):
 
         # Validate first so genuine errors (unknown ID, existing account, no phone,
         # email already in use) return their real message and do NOT consume the
-        # rate-limit budget — only requests that will actually trigger an SMS count.
+        # rate-limit budget — only requests that will actually trigger an OTP count.
         serializer = SignupSerializer(data={'employee_id': employee_id})
         if not serializer.is_valid():
             errors = serializer.errors.get('employee_id') or serializer.errors
             detail = errors[0] if isinstance(errors, list) and errors else "Signup failed."
             return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Rate limit the SMS-sending path by employee_id and by client IP.
+        # Rate limit the OTP-sending path by employee_id and by client IP.
         ip = get_client_ip(request) or 'unknown'
         if (self._rate_limited(f"signup:{employee_id}", self.SIGNUP_MAX_PER_EMPLOYEE)
                 or self._rate_limited(f"signup_ip:{ip}", self.SIGNUP_MAX_PER_IP)):
@@ -572,22 +576,94 @@ class SignupView(APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        try:
-            serializer.save()
-        except SignupSMSError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
-        except Exception as e:
-            logger.error(f"Signup failed for {employee_id}: {e}", exc_info=True)
-            return Response({"detail": "Signup failed. Please try again later."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        employee = EmployeeDetail.objects.get(employee_id=employee_id)
+        phone = employee.phone or employee.mno
 
-        phone = getattr(serializer, 'phone', '') or ''
+        otp_result = ntc_send_otp(phone)
+        if not otp_result.get('success'):
+            logger.error(f"Signup OTP send failed for {employee_id}: {otp_result.get('error')}")
+            return Response(
+                {"detail": "Failed to send the verification code. Please try again later."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Remember the transactionId so the verify step can validate the entered OTP.
+        cache.set(self._signup_otp_cache_key(employee_id), otp_result['transaction_id'],
+                  self.SIGNUP_OTP_TTL_SECONDS)
+
         phone_hint = f"***{phone[-4:]}" if len(phone) >= 4 else "***"
         return Response({
             "status": "success",
-            "detail": "A temporary password has been sent to your registered phone number.",
+            "detail": "A verification code has been sent to your registered phone number.",
+            "employee_id": employee_id,
             "phone_hint": phone_hint,
         }, status=status.HTTP_200_OK)
+
+
+class SignupVerifyView(APIView):
+    """
+    Public signup step 2: verify the OTP sent to the employee's phone and create
+    the account with the password the user chooses.
+    """
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(
+        tags=["Users"],
+        operation_summary="Self-service signup — verify OTP & set password (public)",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "employee_id": openapi.Schema(type=openapi.TYPE_STRING),
+                "otp": openapi.Schema(type=openapi.TYPE_STRING),
+                "password": openapi.Schema(type=openapi.TYPE_STRING),
+            },
+            required=["employee_id", "otp", "password"],
+        ),
+        responses={201: "Account created", 400: "Invalid OTP / validation error"},
+    )
+    def post(self, request):
+        serializer = SignupVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+            # Surface the first field error in a friendly shape.
+            first = next(iter(serializer.errors.values()))
+            detail = first[0] if isinstance(first, list) and first else "Signup verification failed."
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+        employee_id = serializer.validated_data['employee_id']
+        otp = serializer.validated_data['otp']
+
+        cache_key = SignupView._signup_otp_cache_key(employee_id)
+        transaction_id = cache.get(cache_key)
+        if not transaction_id:
+            return Response(
+                {"detail": "Your verification code has expired. Please request a new one."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify against the same mobile number the OTP was sent to.
+        employee = EmployeeDetail.objects.get(employee_id=employee_id)
+        phone = employee.phone or employee.mno
+        result = ntc_validate_otp(transaction_id, otp, phone)
+        if not result.get('success'):
+            return Response(
+                {"detail": result.get('error') or "Invalid verification code. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            serializer.save()
+        except Exception as e:
+            logger.error(f"Signup verify failed for {employee_id}: {e}", exc_info=True)
+            return Response({"detail": "Could not create your account. Please try again later."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # OTP consumed — clear the session so the code can't be reused.
+        cache.delete(cache_key)
+
+        return Response({
+            "status": "success",
+            "detail": "Your account has been created. You can now log in with your password.",
+        }, status=status.HTTP_201_CREATED)
 
 
 class MeView(APIView):
@@ -991,10 +1067,7 @@ class ForgotPasswordView(APIView):
                 return Response({'detail': 'No phone number registered for this user. Please contact admin.'}, status=status.HTTP_400_BAD_REQUEST)
 
             # Send OTP via NTC service
-            otp_result = ntc_send_otp(
-                phone_number,
-                message=f"Dear User, your password reset code is <OTP>. Valid for 5 minutes."
-            )
+            otp_result = ntc_send_otp(phone_number)
 
             if not otp_result['success']:
                 logger.error(f"Failed to send password reset OTP to {user.employee_id}: {otp_result['error']}")
@@ -1008,7 +1081,7 @@ class ForgotPasswordView(APIView):
             OTPLog.objects.create(
                 user=user,
                 phone=phone_number,
-                seq_no=otp_result['seq_no'],
+                seq_no=otp_result['transaction_id'],
                 purpose='password_reset',
                 status='sent',
                 ip_address=get_client_ip(request),
@@ -1063,8 +1136,8 @@ class OTPPasswordResetView(APIView):
         # Only validate against NTC if status is 'sent'
         # If it's already 'verified', we assume the previous step (OTPVerifyView) handled it.
         if otp_log.status == 'sent':
-            # Validate OTP via NTC
-            validate_result = ntc_validate_otp(otp_log.seq_no, otp)
+            # Validate OTP via NTC (transactionId in seq_no, mobile in phone)
+            validate_result = ntc_validate_otp(otp_log.seq_no, otp, otp_log.phone)
 
             if not validate_result['success']:
                 otp_log.attempts = getattr(otp_log, 'attempts', 0) + 1

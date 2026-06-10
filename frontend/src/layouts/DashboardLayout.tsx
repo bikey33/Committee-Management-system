@@ -3,6 +3,7 @@ import { Building2, Users, User, Contact, LayoutDashboard, LogOut } from "lucide
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { authService } from "@/api/auth";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery({
@@ -115,13 +116,16 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
                 </span>
               </div>
             </div>
-            <button 
-              onClick={handleLogout}
-              className="text-muted-foreground hover:text-destructive transition-colors p-1"
-              title="Log out"
-            >
-              <LogOut size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              <ThemeToggle />
+              <button
+                onClick={handleLogout}
+                className="text-muted-foreground hover:text-destructive transition-colors p-1 cursor-pointer"
+                title="Log out"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
         </div>
       </aside>

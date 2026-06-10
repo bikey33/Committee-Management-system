@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2, Building2 } from "lucide-react";
@@ -12,11 +12,10 @@ import {
 } from "@/components/ui/table";
 import { officesService, Office } from "@/api/offices";
 import { OfficeFormModal } from "@/components/office/OfficeFormModal";
+import { DirectorateFormModal } from "@/components/office/DirectorateFormModal";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
 import { TablePagination } from "@/components/common/TablePagination";
 
@@ -25,9 +24,8 @@ const PAGE_SIZE = 10;
 export function OfficesPage() {
   const queryClient = useQueryClient();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isDirectorateModalOpen, setIsDirectorateModalOpen] = useState(false);
   const [selectedOffice, setSelectedOffice] = useState<Office | null>(null);
-  const [directorateName, setDirectorateName] = useState("");
-  const [directorateDescription, setDirectorateDescription] = useState("");
   const [page, setPage] = useState(1);
 
   const { data: offices, isLoading, isError } = useQuery({
@@ -57,20 +55,6 @@ export function OfficesPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.detail || "Failed to delete office");
-    },
-  });
-
-  const createDirectorateMutation = useMutation({
-    mutationFn: (data: { name: string; description: string }) => officesService.createDirectorate(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["directorates"] });
-      queryClient.invalidateQueries({ queryKey: ["offices"] });
-      toast.success("Directorate created successfully");
-      setDirectorateName("");
-      setDirectorateDescription("");
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.detail || error.response?.data?.error || "Failed to create directorate");
     },
   });
 
@@ -106,15 +90,6 @@ export function OfficesPage() {
     return office.directorate_details?.name || office.directorate_name || "None";
   };
 
-  const handleCreateDirectorate = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!directorateName.trim()) return;
-    createDirectorateMutation.mutate({
-      name: directorateName.trim(),
-      description: directorateDescription.trim(),
-    });
-  };
-
   return (
     <div className="flex flex-col gap-6">
       {/* Header Area */}
@@ -126,13 +101,23 @@ export function OfficesPage() {
           </h1>
           <p className="text-muted-foreground mt-1">Manage organizational offices and directorates</p>
         </div>
-        <Button 
-          onClick={handleCreateNew}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
-        >
-          <Plus size={16} />
-          New Office
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button
+            variant="outline"
+            onClick={() => setIsDirectorateModalOpen(true)}
+            className="w-full flex items-center justify-center gap-2 sm:w-auto"
+          >
+            <Plus size={16} />
+            Add Directorate
+          </Button>
+          <Button
+            onClick={handleCreateNew}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
+          >
+            <Plus size={16} />
+            New Office
+          </Button>
+        </div>
       </div>
 
       <Card className="overflow-hidden border-t-4 border-t-[hsl(209,100%,32%)] shadow-sm">
@@ -140,20 +125,6 @@ export function OfficesPage() {
           <CardTitle className="text-sm font-bold tracking-tight text-[hsl(209,100%,32%)]">Directorates</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 pt-4">
-          <form onSubmit={handleCreateDirectorate} className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Input value={directorateName} onChange={(e) => setDirectorateName(e.target.value)} placeholder="Directorate name" />
-            <Button type="submit" disabled={createDirectorateMutation.isPending || !directorateName.trim()} className="w-full">
-              {createDirectorateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
-              Add Directorate
-            </Button>
-            <Textarea
-              value={directorateDescription}
-              onChange={(e) => setDirectorateDescription(e.target.value)}
-              placeholder="Optional description"
-              className="md:col-span-3 min-h-[90px]"
-            />
-          </form>
-
           <div className="space-y-2">
             {directoratesLoading ? (
               <div className="flex items-center justify-center py-6 text-muted-foreground">
@@ -269,9 +240,14 @@ export function OfficesPage() {
       </div>
 
       <OfficeFormModal
-        isOpen={isFormOpen} 
-        onClose={() => setIsFormOpen(false)} 
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
         officeToEdit={selectedOffice}
+      />
+
+      <DirectorateFormModal
+        isOpen={isDirectorateModalOpen}
+        onClose={() => setIsDirectorateModalOpen(false)}
       />
     </div>
   );

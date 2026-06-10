@@ -1,16 +1,7 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Users } from "lucide-react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { committeesService, Committee } from "@/api/committees";
+import CommitteeListTable from "@/components/committee/CommitteeListTable";
 import { CommitteeFormModal } from "@/components/committee/CommitteeFormModal";
 import { CommitteeMembersModal } from "@/components/committee/CommitteeMembersModal";
 import CommitteeDetailModal from "@/components/committee/CommitteeDetailModal";
@@ -108,95 +100,27 @@ export function CommitteesPage() {
       </div>
 
       {/* Table Area */}
-      <div className="border rounded-xl bg-card shadow-sm overflow-hidden">
-        <div className="w-full overflow-x-auto">
-        <Table className="min-w-[920px]">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[250px]">Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Office</TableHead>
-              <TableHead>Members</TableHead>
-              <TableHead>Formation Date</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right pr-6">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                  Loading committees...
-                </TableCell>
-              </TableRow>
-            ) : isError ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-destructive">
-                  Error loading committees. Please try again.
-                </TableCell>
-              </TableRow>
-            ) : committees?.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                  No committees found. Create one to get started.
-                </TableCell>
-              </TableRow>
-            ) : (
-              committees?.map((committee: Committee) => (
-                <TableRow 
-                  key={getCommitteeId(committee) || committee.name}
-                  onClick={() => handleViewDetails(getCommitteeId(committee) || "")}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
-                >
-                  <TableCell className="font-medium text-foreground py-4">
-                    {committee.name}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="bg-background text-foreground border-border font-normal capitalize">
-                      {committee.committee_type}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{committee.office_name || "N/A"}</TableCell>
-                  <TableCell className="text-muted-foreground">{committee.members_count || 0}</TableCell>
-                  <TableCell className="text-muted-foreground">{committee.formation_date || "Not set"}</TableCell>
-                  <TableCell>
-                    <Badge className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium border-transparent rounded-full px-3 capitalize">
-                      {committee.committee_status || committee.status || "Active"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-3">
-                      <button 
-                        onClick={() => handleManageMembers(committee)}
-                        className="text-muted-foreground hover:text-primary transition-colors"
-                        title="Manage Members"
-                      >
-                        <Users size={18} />
-                      </button>
-                      <button 
-                        onClick={() => handleEdit(committee)}
-                        className="text-muted-foreground hover:text-foreground transition-colors"
-                        title="Edit Committee"
-                      >
-                        <Pencil size={18} />
-                      </button>
-                      <button 
-                        onClick={() => setCommitteeToDelete(committee)}
-                        disabled={deleteMutation.isPending}
-                        className="text-destructive/80 hover:text-destructive transition-colors disabled:opacity-50"
-                        title="Delete Committee"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+      {isLoading ? (
+        <div className="border rounded-xl bg-card p-8 text-center text-muted-foreground shadow-sm">
+          Loading committees...
         </div>
-      </div>
+      ) : isError ? (
+        <div className="border rounded-xl bg-card p-8 text-center text-destructive shadow-sm">
+          Error loading committees. Please try again.
+        </div>
+      ) : committees?.length === 0 ? (
+        <div className="border rounded-xl bg-card p-8 text-center text-muted-foreground shadow-sm">
+          No committees found. Create one to get started.
+        </div>
+      ) : (
+        <CommitteeListTable
+          committees={committees || []}
+          onView={handleViewDetails}
+          onEdit={handleEdit}
+          onManageMembers={handleManageMembers}
+          onDelete={(c) => setCommitteeToDelete(c)}
+        />
+      )}
 
       {/* Modals */}
       <CommitteeFormModal 
