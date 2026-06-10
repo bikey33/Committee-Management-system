@@ -7,6 +7,8 @@ from rest_framework import status
 from .permissions import CommitteePermission
 from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember, CommitteePhaseCheckpoint
 from .notifications import notify_committee_membership
+from .signals import ensure_stakeholder_for_membership, deactivate_stakeholder_for_membership
+from .models import is_committee_closed, is_committee_overdue
 from procurement.models import ProcurementDocument
 from django.db.utils import OperationalError, ProgrammingError
 from .serializers import CommitteeSerializer
@@ -336,20 +338,25 @@ class GetAllCommitteesView(APIView):
                     'memberships', 'memberships__user'
                 ).all()
             else:
-                # Custom scoping for committees:
-                # Creators see their own, members see their own, and Office Admins see committees created within their office subtree
-                descendant_offices = []
+                # Custom scoping: creators see their own, members see their own,
+                # and users see committees tied to their own office. (Office has no
+                # hierarchy, so scope to the user's single office — not descendants.)
+                office_q = models.Q()
                 if request.user.office:
-                    descendant_offices = request.user.office.get_descendants(include_self=True)
-                
+                    office_q = (
+                        models.Q(office=request.user.office)
+                        | models.Q(procurement_plan__office=request.user.office)
+                        | models.Q(created_by__office=request.user.office)
+                    )
+
                 committees = Committee.objects.select_related(
                     'created_by', 'created_by__user_role'
                 ).prefetch_related(
                     'memberships', 'memberships__user'
                 ).filter(
                     models.Q(created_by=request.user) |
-                    models.Q(memberships__user=request.user) |
-                    models.Q(created_by__office__in=descendant_offices)
+                    models.Q(memberships__user=request.user, memberships__is_active=True) |
+                    office_q
                 ).distinct()
 
             serializer = CommitteeSerializer(committees, many=True, context={'request': request})
@@ -453,14 +460,23 @@ class AddMemberView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            if CommitteeMembership.objects.filter(committee=committee, user=user).exists():
+            existing = CommitteeMembership.objects.filter(committee=committee, user=user).first()
+            if existing and existing.is_active:
                 logger.error(f"User {employee_id} is already a member of committee {committee_id}")
                 return Response(
                     {"status": "error", "message": "User is already a member of this committee"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            membership = CommitteeMembership.objects.create(committee=committee, user=user, committee_role=committee_role)
+            if existing:
+                # Previously removed — reactivate the existing row (genuine re-join).
+                existing.reactivate(role=committee_role)
+                membership = existing
+                ensure_stakeholder_for_membership(membership)
+            else:
+                membership = CommitteeMembership.objects.create(
+                    committee=committee, user=user, committee_role=committee_role
+                )
             notify_committee_membership(membership)
             serializer = CommitteeSerializer(committee, context={'request': request})
             logger.debug(f"Member {employee_id} added to committee {committee_id}")
@@ -492,14 +508,18 @@ class RemoveMemberView(APIView):
                     {"status": "error", "message": "User not found"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            membership = CommitteeMembership.objects.filter(committee=committee, user=user).first()
+            membership = CommitteeMembership.objects.filter(
+                committee=committee, user=user, is_active=True
+            ).first()
             if not membership:
                 logger.error(f"User {employee_id} is not a member of committee {committee_id}")
                 return Response(
                     {"status": "error", "message": "User is not a member of this committee"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            membership.delete()
+            # Soft-delete to retain history; remove plan visibility.
+            membership.soft_delete()
+            deactivate_stakeholder_for_membership(membership)
             serializer = CommitteeSerializer(committee, context={'request': request})
             logger.debug(f"Member {employee_id} removed from committee {committee_id}")
             return Response(
@@ -520,7 +540,7 @@ class GetCommitteesByMemberView(APIView):
     def get(self, request, employee_id):
         try:
             user = CustomUser.objects.get(employee_id=employee_id)
-            memberships = CommitteeMembership.objects.filter(user=user)
+            memberships = CommitteeMembership.objects.filter(user=user, is_active=True)
             committees = [membership.committee for membership in memberships]
             # Since this is a list of objects, we can't cleanly prefetch here easily without reconstructing the queryset,
             # but usually this list is small. Rebuilding as a queryset:
@@ -567,7 +587,7 @@ class GetCommitteesByTypeView(APIView):
                 
                 qs = qs.filter(
                     models.Q(created_by=request.user) |
-                    models.Q(memberships__user=request.user) |
+                    models.Q(memberships__user=request.user, memberships__is_active=True) |
                     models.Q(created_by__office__in=descendant_offices) |
                     models.Q(procurement_plan__office__in=descendant_offices)
                 ).distinct()
@@ -627,7 +647,7 @@ class GetCommitteesByDateRangeView(APIView):
             
             committees = committees.filter(
                 models.Q(created_by=request.user) |
-                models.Q(memberships__user=request.user) |
+                models.Q(memberships__user=request.user, memberships__is_active=True) |
                 models.Q(created_by__office__in=descendant_offices) |
                 models.Q(procurement_plan__office__in=descendant_offices)
             ).distinct()
@@ -1145,3 +1165,179 @@ class CommitteePhaseTransitionView(APIView):
                 {'status': 'error', 'message': 'An error occurred'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ---------------------------------------------------------------------------
+# Reporting endpoints
+# ---------------------------------------------------------------------------
+
+def _is_committee_admin(user):
+    return is_superadmin(user) or user.has_rbac_permission('committee.view_cross_office')
+
+
+def _committee_report_item(committee, *, my_role=None, membership_active=None,
+                           joined_at=None, left_at=None):
+    """Compact committee dict for report lists (avoids full serializer cost)."""
+    closed = is_committee_closed(committee)
+    item = {
+        "committee_id": committee.id,
+        "name": committee.name,
+        "committee_type": committee.committee_type,
+        "committee_status": committee.committee_status,
+        "office_name": (
+            committee.office.name if committee.office
+            else (committee.procurement_plan.office.name
+                  if committee.procurement_plan and committee.procurement_plan.office else None)
+        ),
+        "deadline": committee.deadline,
+        "members_count": committee.memberships.filter(is_active=True).count(),
+        "is_closed": closed,
+        "is_overdue": is_committee_overdue(committee),
+    }
+    if my_role is not None:
+        item["my_role"] = my_role
+    if membership_active is not None:
+        item["membership_active"] = membership_active
+        item["joined_at"] = joined_at
+        item["left_at"] = left_at
+        item["left_reason"] = (
+            "removed" if not membership_active else ("closed" if closed else None)
+        )
+    return item
+
+
+class MyCommitteesReportView(APIView):
+    """GET /committees/reports/my-committees/ — the user's active vs past committees."""
+    permission_classes = [CommitteePermission]
+
+    def get(self, request):
+        memberships = (
+            CommitteeMembership.objects
+            .filter(user=request.user)
+            .select_related('committee', 'committee__office', 'committee__procurement_plan',
+                            'committee__procurement_plan__office')
+            .prefetch_related('committee__checkpoints')
+        )
+        active, past = [], []
+        for m in memberships:
+            committee = m.committee
+            item = _committee_report_item(
+                committee, my_role=m.committee_role, membership_active=m.is_active,
+                joined_at=m.created_at, left_at=m.left_at,
+            )
+            # Active: still a member AND committee not closed. Otherwise it's past
+            # (removed, or closed-but-still-member).
+            if m.is_active and not item["is_closed"]:
+                active.append(item)
+            else:
+                past.append(item)
+
+        return Response({
+            "status": "success",
+            "data": {
+                "active": active,
+                "past": past,
+                "counts": {"active": len(active), "past": len(past)},
+            },
+        }, status=status.HTTP_200_OK)
+
+
+class OfficeCommitteesView(APIView):
+    """GET /committees/reports/office/ — committees tied to the user's office.
+
+    Admins/cross-office users may pass ?office_id= to view another office.
+    """
+    permission_classes = [CommitteePermission]
+
+    def get(self, request):
+        office_id = request.query_params.get('office_id')
+        if office_id and _is_committee_admin(request.user):
+            office = Office.objects.filter(id=office_id).first()
+        else:
+            office = request.user.office
+
+        if not office:
+            return Response(
+                {"status": "success", "results": 0, "data": {"committees": []},
+                 "office": None},
+                status=status.HTTP_200_OK,
+            )
+
+        committees = Committee.objects.filter(
+            models.Q(office=office) | models.Q(procurement_plan__office=office)
+        ).select_related(
+            'created_by', 'created_by__user_role', 'office', 'procurement_plan'
+        ).prefetch_related('memberships', 'memberships__user', 'checkpoints').distinct()
+
+        serializer = CommitteeSerializer(committees, many=True, context={'request': request})
+        return Response({
+            "status": "success",
+            "results": len(serializer.data),
+            "office": {"id": office.id, "name": office.name},
+            "data": {"committees": serializer.data},
+        }, status=status.HTTP_200_OK)
+
+
+class CommitteeStatsView(APIView):
+    """GET /committees/reports/stats/ — aggregate counts for cards & charts.
+
+    Admins (or ?office_id=) see org-wide / a chosen office; regular users see
+    their personal + own-office committees.
+    """
+    permission_classes = [CommitteePermission]
+
+    def get(self, request):
+        admin = _is_committee_admin(request.user)
+        office_id = request.query_params.get('office_id')
+
+        if admin and office_id:
+            qs = Committee.objects.filter(
+                models.Q(office_id=office_id) | models.Q(procurement_plan__office_id=office_id)
+            )
+            scope = "office"
+        elif admin:
+            qs = Committee.objects.all()
+            scope = "org"
+        else:
+            office = request.user.office
+            office_q = models.Q()
+            if office:
+                office_q = models.Q(office=office) | models.Q(procurement_plan__office=office)
+            qs = Committee.objects.filter(
+                models.Q(created_by=request.user)
+                | models.Q(memberships__user=request.user, memberships__is_active=True)
+                | office_q
+            )
+            scope = "personal"
+
+        qs = qs.distinct()
+
+        by_status = list(qs.values('committee_status').annotate(count=models.Count('id')).order_by())
+        by_type = list(qs.values('committee_type').annotate(count=models.Count('id')).order_by())
+        by_office = list(
+            qs.values('office_id', 'office__name').annotate(count=models.Count('id')).order_by()
+        )
+        by_office = [
+            {"office_id": r["office_id"], "office_name": r["office__name"], "count": r["count"]}
+            for r in by_office
+        ]
+
+        # closed/overdue depend on the checkpoint-derived property → compute in Python.
+        total = closed = overdue = 0
+        for c in qs.prefetch_related('checkpoints'):
+            total += 1
+            if is_committee_closed(c):
+                closed += 1
+            elif is_committee_overdue(c):
+                overdue += 1
+
+        return Response({
+            "status": "success",
+            "scope": scope,
+            "data": {
+                "totals": {"total": total, "closed": closed, "open": total - closed, "overdue": overdue},
+                "by_status": by_status,
+                "by_type": by_type,
+                "by_office": by_office,
+            },
+        }, status=status.HTTP_200_OK)

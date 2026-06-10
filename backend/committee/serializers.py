@@ -1,6 +1,9 @@
 from rest_framework import serializers
 from django.conf import settings
-from .models import Committee, CommitteeMembership, CommitteeRole, CommitteePhaseCheckpoint
+from .models import (
+    Committee, CommitteeMembership, CommitteeRole, CommitteePhaseCheckpoint,
+    is_committee_closed, is_committee_overdue,
+)
 from django.db.utils import OperationalError, ProgrammingError
 from users.models import CustomUser, Office
 from procurement.models import ProcurementPlan
@@ -34,7 +37,7 @@ class CommitteeMemberSerializer(serializers.ModelSerializer):
             return role_map.get(obj.employee_id, 'member')
 
         membership = CommitteeMembership.objects.filter(
-            user=obj, committee=self.context.get('committee')
+            user=obj, committee=self.context.get('committee'), is_active=True
         ).first()
         if membership:
             return membership.committee_role
@@ -125,6 +128,8 @@ class CommitteeSerializer(serializers.ModelSerializer):
     phases = serializers.SerializerMethodField()
     initialization_phase_completed = serializers.SerializerMethodField()
     finalization_phase_completed = serializers.SerializerMethodField()
+    is_closed = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
 
     class Meta:
         model = Committee
@@ -134,12 +139,20 @@ class CommitteeSerializer(serializers.ModelSerializer):
             'review_date', 'completion_date', 'decision_date',
             'formation_letter', 'formationLetterURL', 'approval_status', 'committee_status',
             'members', 'membersList', 'members_count', 'createdBy', 'createdAt', 'updatedAt',
-            'current_phase', 'phases', 'initialization_phase_completed', 'finalization_phase_completed'
+            'current_phase', 'phases', 'initialization_phase_completed', 'finalization_phase_completed',
+            'is_closed', 'is_overdue'
         ]
         read_only_fields = [
-            'id', 'createdBy', 'createdAt', 'updatedAt', 'membersList', 'office_name', 
-            'formationLetterURL', 'members_count', 'phases', 'initialization_phase_completed', 'finalization_phase_completed'
+            'id', 'createdBy', 'createdAt', 'updatedAt', 'membersList', 'office_name',
+            'formationLetterURL', 'members_count', 'phases', 'initialization_phase_completed', 'finalization_phase_completed',
+            'is_closed', 'is_overdue'
         ]
+
+    def get_is_closed(self, obj):
+        return is_committee_closed(obj)
+
+    def get_is_overdue(self, obj):
+        return is_committee_overdue(obj)
 
     def get_createdBy(self, obj):
         user = obj.created_by
@@ -160,8 +173,8 @@ class CommitteeSerializer(serializers.ModelSerializer):
         return None
 
     def get_members_count(self, obj):
-        """Return the count of members in the committee"""
-        return obj.memberships.count()
+        """Return the count of current (active) members in the committee"""
+        return obj.memberships.filter(is_active=True).count()
 
     def get_office_name(self, obj):
         if obj.office:
@@ -171,7 +184,7 @@ class CommitteeSerializer(serializers.ModelSerializer):
         return None
 
     def get_membersList(self, obj):
-        memberships = list(obj.memberships.select_related('user').all())
+        memberships = list(obj.memberships.filter(is_active=True).select_related('user'))
         role_map = {m.user.employee_id: m.committee_role for m in memberships}
         users = [m.user for m in memberships]
         return CommitteeMemberSerializer(
@@ -295,8 +308,8 @@ class CommitteeSerializer(serializers.ModelSerializer):
         if role_counts['coordinator'] != 1:
             raise serializers.ValidationError("Exactly one coordinator must be assigned in members.")
 
-        if role_counts['secretary'] != 1:
-            raise serializers.ValidationError("Exactly one secretary must be assigned in members.")
+        if role_counts['secretary'] > 1:
+            raise serializers.ValidationError("At most one secretary may be assigned in members.")
 
         return normalized_members
 
@@ -371,7 +384,13 @@ class CommitteeSerializer(serializers.ModelSerializer):
         # an edit are NOT notified (use the Add-Member action for that); only a
         # genuine ROLE CHANGE on an existing member triggers a notification.
         if members is not None:
+            from .signals import (
+                ensure_stakeholder_for_membership,
+                deactivate_stakeholder_for_membership,
+            )
             with transaction.atomic():
+                # Include inactive rows so a re-added member reactivates the existing
+                # row (unique_together) rather than erroring.
                 existing = {m.user_id: m for m in instance.memberships.all()}
                 desired_user_ids = set()
 
@@ -396,6 +415,11 @@ class CommitteeSerializer(serializers.ModelSerializer):
                             user=user,
                             committee_role=new_role,
                         )
+                    elif not current.is_active:
+                        # Previously removed, re-added during edit — reactivate
+                        # silently (edits don't notify) and restore plan visibility.
+                        current.reactivate(role=new_role)
+                        ensure_stakeholder_for_membership(current)
                     elif current.committee_role != new_role:
                         # Role changed — update and notify the member.
                         current.committee_role = new_role
@@ -403,12 +427,11 @@ class CommitteeSerializer(serializers.ModelSerializer):
                         notify_committee_membership(current)
                     # else: unchanged — leave as-is.
 
-                # Remove members no longer present (no notification on removal).
-                removed_user_ids = set(existing) - desired_user_ids
-                if removed_user_ids:
-                    CommitteeMembership.objects.filter(
-                        committee=instance, user_id__in=removed_user_ids
-                    ).delete()
+                # Soft-delete members no longer present (no notification on removal).
+                for uid, m in existing.items():
+                    if m.is_active and uid not in desired_user_ids:
+                        m.soft_delete()
+                        deactivate_stakeholder_for_membership(m)
 
             logger.debug(f"Members updated: {[m['employeeId'] for m in members]}")
 

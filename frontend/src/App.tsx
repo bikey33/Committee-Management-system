@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { OfficesPage } from './pages/OfficesPage'
 import { UsersPage } from './pages/UsersPage'
 import { EmployeesPage } from './pages/EmployeesPage'
+import { ReportsPage } from './pages/ReportsPage'
 import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
 import { ChangePasswordPage } from './pages/ChangePasswordPage'
@@ -28,6 +29,7 @@ function App() {
               <Route path="/committees" element={<CommitteesPage />} />
               <Route path="/employees" element={<EmployeesPage />} />
               <Route path="/users" element={<UsersPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
             </Route>
           </Route>
         </Routes>

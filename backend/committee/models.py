@@ -142,16 +142,57 @@ class CommitteeRole(models.Model):
 
 
 class CommitteeMembership(models.Model):
+    """A user's membership in a committee.
+
+    Soft-deleted (is_active=False, left_at set) on removal so 'past committees'
+    history is retained. One row per (committee, user): re-adding reactivates the
+    existing row, so only the latest join/leave stint is tracked (full multi-stint
+    history would be a separate additive audit table).
+    """
     committee = models.ForeignKey(Committee, related_name='memberships', on_delete=models.CASCADE)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     committee_role = models.CharField(max_length=50, default='member')
     created_at = models.DateTimeField(default=timezone.now)
+    is_active = models.BooleanField(default=True)
+    left_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ('committee', 'user')
+        indexes = [
+            models.Index(fields=['committee', 'is_active']),
+            models.Index(fields=['user', 'is_active']),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.committee.name} ({self.committee_role})"
+
+    def reactivate(self, role=None):
+        """Re-activate a previously-removed membership (a fresh join)."""
+        self.is_active = True
+        self.left_at = None
+        self.created_at = timezone.now()
+        if role is not None:
+            self.committee_role = role
+        self.save(update_fields=['is_active', 'left_at', 'created_at', 'committee_role'])
+
+    def soft_delete(self):
+        """Mark the membership as removed while retaining history."""
+        self.is_active = False
+        self.left_at = timezone.now()
+        self.save(update_fields=['is_active', 'left_at'])
+
+
+def is_committee_closed(committee) -> bool:
+    """Single source of truth for 'closed' (mirrors the frontend CommitteeStepper)."""
+    if committee.committee_status in ('completed', 'dissolved'):
+        return True
+    return bool(committee.finalization_phase_completed)
+
+
+def is_committee_overdue(committee) -> bool:
+    if is_committee_closed(committee):
+        return False
+    return bool(committee.deadline) and committee.deadline < timezone.localdate()
 
 
 class ReviewCommitteeDefaultMember(models.Model):

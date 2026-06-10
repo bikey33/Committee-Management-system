@@ -299,7 +299,7 @@ const MembersStep = ({
       <div className="bg-muted/50 p-4 rounded-lg">
         <h4 className="font-medium text-sm mb-2">Member Guidelines</h4>
         <ul className="text-sm text-muted-foreground space-y-1">
-          <li>• Each committee must have exactly one Co-ordinator</li>
+          <li>• Each committee must have exactly one Co-ordinator (Secretary is optional)</li>
           <li>• Employee IDs will auto-fill member information when available</li>
           <li>• Ensure all required fields are completed for each member</li>
           <li>• All members will be notified via email upon committee creation</li>

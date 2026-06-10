@@ -336,11 +336,6 @@ export function CommitteeFormModal({ isOpen, onClose, committeeToEdit }: Props) 
       return;
     }
 
-    if (roleCounts.secretary !== 1) {
-      toast.error("Please assign exactly one secretary.");
-      return;
-    }
-
     mutation.mutate({
       ...data,
       deadline: calculateDeadlineDate(data.formation_date || "", deadlineDays),

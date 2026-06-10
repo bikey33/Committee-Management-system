@@ -10,12 +10,17 @@ from .views import (
     committee_details_with_type, GetCommitteesByTypeView, CommitteeRolesView,
     CommitteeRolesCRUDView, CommitteeRoleDetailView, ReviewCommitteeDefaultMembersView,
     ReviewCommitteeDefaultMembersDeleteView, CommitteePhaseCheckpointView,
-    CommitteePhaseCheckpointDetailView, CommitteePhaseTransitionView
+    CommitteePhaseCheckpointDetailView, CommitteePhaseTransitionView,
+    MyCommitteesReportView, OfficeCommitteesView, CommitteeStatsView,
 )
 
 urlpatterns = [
     path('committees/create/', CreateCommitteeView.as_view(), name='create-committee'),
     path('committees/all/', GetAllCommitteesView.as_view(), name='get-all-committees'),
+    # Reporting endpoints (must precede the committees/<committee_id>/ catch-all).
+    path('committees/reports/my-committees/', MyCommitteesReportView.as_view(), name='my-committees-report'),
+    path('committees/reports/office/', OfficeCommitteesView.as_view(), name='office-committees-report'),
+    path('committees/reports/stats/', CommitteeStatsView.as_view(), name='committee-stats-report'),
     path('roles/', CommitteeRolesView.as_view(), name='committee-roles'),
     path('roles/manage/', CommitteeRolesCRUDView.as_view(), name='committee-roles-crud'),
     path('roles/manage/<int:role_id>/', CommitteeRoleDetailView.as_view(), name='committee-role-detail'),

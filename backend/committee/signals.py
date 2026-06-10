@@ -15,44 +15,32 @@ logger = logging.getLogger(__name__)
 # signal — see committee/notifications.py for the rationale.
 
 
-@receiver(post_save, sender=CommitteeMembership)
-def auto_create_stakeholder_on_committee_join(sender, instance, created, **kwargs):
-    """
-    When a user is added to a committee that is linked to a procurement plan,
-    automatically ensure they have a ProcurementStakeholder entry so they can
-    see and interact with that plan.
-    """
-    if not created:
-        return
-    
-    committee = instance.committee
+def _stakeholder_role_for(membership):
+    role = (membership.committee_role or 'member').lower()
+    return 'committee_chair' if role in ('chairperson', 'chair') else 'committee_member'
+
+
+def ensure_stakeholder_for_membership(membership):
+    """Ensure an active ProcurementStakeholder exists for this membership's user
+    on the committee's procurement plan. Idempotent; reactivates if deactivated.
+    Safe to call on a genuine join or a re-add."""
+    committee = membership.committee
     procurement_plan = committee.procurement_plan
-    
     if not procurement_plan:
         logger.debug(
             f"Committee '{committee.name}' has no procurement plan; "
-            f"skipping stakeholder creation for user {instance.user}"
+            f"skipping stakeholder creation for user {membership.user}"
         )
         return
-    
-    user = instance.user
-    
-    # Determine the stakeholder role based on committee role
-    committee_role = instance.committee_role.lower() if instance.committee_role else 'member'
-    if committee_role in ('chairperson', 'chair'):
-        stakeholder_role = 'committee_chair'
-    else:
-        stakeholder_role = 'committee_member'
-    
-    # Check if user already has an active stakeholder entry for this plan + role
+
+    user = membership.user
+    stakeholder_role = _stakeholder_role_for(membership)
+
     existing = ProcurementStakeholder.objects.filter(
-        procurement_plan=procurement_plan,
-        user=user,
-        role=stakeholder_role,
+        procurement_plan=procurement_plan, user=user, role=stakeholder_role,
     ).first()
-    
+
     if existing:
-        # Reactivate if previously deactivated
         if existing.status != 'active':
             existing.status = 'active'
             existing.save(update_fields=['status'])
@@ -61,8 +49,7 @@ def auto_create_stakeholder_on_committee_join(sender, instance, created, **kwarg
                 f"{procurement_plan.policy_number} (role: {stakeholder_role})"
             )
         return
-    
-    # Create new stakeholder entry
+
     ProcurementStakeholder.objects.create(
         procurement_plan=procurement_plan,
         user=user,
@@ -75,12 +62,32 @@ def auto_create_stakeholder_on_committee_join(sender, instance, created, **kwarg
         ),
         status='active',
     )
-    
     logger.info(
         f"Auto-created stakeholder for {user} on plan "
-        f"{procurement_plan.policy_number} (role: {stakeholder_role}, "
-        f"committee: {committee.name})"
+        f"{procurement_plan.policy_number} (role: {stakeholder_role}, committee: {committee.name})"
     )
+
+
+def deactivate_stakeholder_for_membership(membership):
+    """Deactivate the auto-created stakeholder when a member is removed, so a
+    removed member loses procurement-plan visibility."""
+    committee = membership.committee
+    procurement_plan = committee.procurement_plan
+    if not procurement_plan:
+        return
+    ProcurementStakeholder.objects.filter(
+        procurement_plan=procurement_plan,
+        user=membership.user,
+        role=_stakeholder_role_for(membership),
+    ).exclude(status='inactive').update(status='inactive')
+
+
+@receiver(post_save, sender=CommitteeMembership)
+def auto_create_stakeholder_on_committee_join(sender, instance, created, **kwargs):
+    """On a genuine new membership, ensure the user has a stakeholder entry."""
+    if not created:
+        return
+    ensure_stakeholder_for_membership(instance)
 
 
 @receiver(post_save, sender='committee.Committee')

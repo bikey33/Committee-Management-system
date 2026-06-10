@@ -37,6 +37,39 @@ export interface Committee {
   phases?: CommitteePhase[];
   initialization_phase_completed?: boolean;
   finalization_phase_completed?: boolean;
+  is_closed?: boolean;
+  is_overdue?: boolean;
+}
+
+export interface MyCommitteeReportItem {
+  committee_id: number | string;
+  name: string;
+  committee_type: string;
+  committee_status: string;
+  office_name?: string | null;
+  deadline?: string | null;
+  members_count?: number;
+  is_closed: boolean;
+  is_overdue: boolean;
+  my_role?: string;
+  membership_active?: boolean;
+  joined_at?: string | null;
+  left_at?: string | null;
+  left_reason?: "removed" | "closed" | null;
+}
+
+export interface MyCommitteesReport {
+  active: MyCommitteeReportItem[];
+  past: MyCommitteeReportItem[];
+  counts: { active: number; past: number };
+}
+
+export interface CommitteeStats {
+  scope?: "org" | "office" | "personal" | string;
+  totals: { total: number; closed: number; open: number; overdue: number };
+  by_status: { committee_status: string; count: number }[];
+  by_type: { committee_type: string; count: number }[];
+  by_office: { office_id: number | null; office_name: string | null; count: number }[];
 }
 
 export const committeesService = {
@@ -83,6 +116,26 @@ export const committeesService = {
   getRoles: async () => {
     const response = await apiClient.get("/api/committee/roles/");
     return response.data;
+  },
+
+  // ----- Reporting -----
+  getMyCommitteesReport: async (): Promise<MyCommitteesReport> => {
+    const response = await apiClient.get("/api/committee/committees/reports/my-committees/");
+    return response.data?.data ?? { active: [], past: [], counts: { active: 0, past: 0 } };
+  },
+
+  getOfficeCommittees: async (officeId?: number | string) => {
+    const response = await apiClient.get("/api/committee/committees/reports/office/", {
+      params: officeId ? { office_id: officeId } : {},
+    });
+    return response.data?.data?.committees ?? [];
+  },
+
+  getCommitteeStats: async (officeId?: number | string): Promise<CommitteeStats> => {
+    const response = await apiClient.get("/api/committee/committees/reports/stats/", {
+      params: officeId ? { office_id: officeId } : {},
+    });
+    return { scope: response.data?.scope, ...(response.data?.data ?? {}) };
   },
 
   addMember: async (committeeId: string, memberData: any) => {
