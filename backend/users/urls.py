@@ -11,7 +11,7 @@ from .views import (
     EffectivePermissionsView, ChangePasswordView, AdminResetPasswordView, SignupView, SignupVerifyView,
     DirectorateListView, DirectorateCreateView, DirectorateUpdateView, DirectorateDeleteView,
     OfficeListView, OfficeCreateView, OfficeUpdateView, OfficeDeleteView,
-    PositionListView, WorkingOfficeListView,
+    PositionListView, WorkingOfficeListView, UserMembershipsView,
 )
 
 urlpatterns = [
@@ -33,6 +33,7 @@ urlpatterns = [
     
     path('users/', UserListView.as_view(), name='user-list'),
     path('users/<str:employee_id>/', UserDetailView.as_view(), name='user-detail'),
+    path('users/<str:employee_id>/memberships/', UserMembershipsView.as_view(), name='user-memberships'),
     path('users/<str:employee_id>/admin-reset-password/', AdminResetPasswordView.as_view(), name='admin-reset-password'),
     path('employee/<str:employee_id>/', EmployeeByIdView.as_view(), name='employee-by-id'),
     path('profile/', UserProfileView.as_view(), name='profile'),

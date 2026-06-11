@@ -1550,3 +1550,69 @@ class WorkingOfficeListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = WorkingOfficeSerializer
     queryset = WorkingOffice.objects.all()
+
+
+class UserMembershipsView(APIView):
+    """GET /users/<employee_id>/memberships/ — admin-only: list all committee memberships for a user."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        if not (is_superadmin(request.user) or
+                request.user.has_rbac_permission('users.view') or
+                request.user.has_rbac_permission('committee.view_cross_office')):
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            target_user = CustomUser.objects.get(employee_id=employee_id)
+        except CustomUser.DoesNotExist:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Lazy import to avoid circular dependency
+        from committee.models import CommitteeMembership
+        from committee.models import is_committee_closed, is_committee_overdue
+
+        memberships = (
+            CommitteeMembership.objects
+            .filter(user=target_user)
+            .select_related('committee', 'committee__office',
+                            'committee__procurement_plan', 'committee__procurement_plan__office')
+            .prefetch_related('committee__checkpoints')
+        )
+
+        active, past = [], []
+        for m in memberships:
+            c = m.committee
+            closed = is_committee_closed(c)
+            item = {
+                "committee_id": c.id,
+                "name": c.name,
+                "committee_type": c.committee_type,
+                "committee_status": c.committee_status,
+                "office_name": (
+                    c.office.name if c.office
+                    else (c.procurement_plan.office.name
+                          if c.procurement_plan and c.procurement_plan.office else None)
+                ),
+                "deadline": c.deadline,
+                "members_count": c.memberships.filter(is_active=True).count(),
+                "is_closed": closed,
+                "is_overdue": is_committee_overdue(c),
+                "my_role": m.committee_role,
+                "membership_active": m.is_active,
+                "joined_at": m.created_at,
+                "left_at": m.left_at,
+                "left_reason": "removed" if not m.is_active else ("closed" if closed else None),
+            }
+            if m.is_active and not closed:
+                active.append(item)
+            else:
+                past.append(item)
+
+        return Response({
+            "status": "success",
+            "data": {
+                "active": active,
+                "past": past,
+                "counts": {"active": len(active), "past": len(past)},
+            },
+        }, status=status.HTTP_200_OK)

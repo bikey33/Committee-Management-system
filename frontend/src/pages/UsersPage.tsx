@@ -23,6 +23,7 @@ import {
 import { usersService, User as UserModel } from "@/api/users";
 import { UserFormModal } from "@/components/user/UserFormModal";
 import { UserEditModal } from "@/components/user/UserEditModal";
+import { UserProfileModal } from "@/components/user/UserProfileModal";
 import { Badge } from "@/components/ui/badge";
 import { TablePagination } from "@/components/common/TablePagination";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ export function UsersPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserModel | null>(null);
   const [deletingUser, setDeletingUser] = useState<UserModel | null>(null);
+  const [profileUser, setProfileUser] = useState<UserModel | null>(null);
   const [page, setPage] = useState(1);
 
   const { data, isLoading, isError } = useQuery({
@@ -155,8 +157,13 @@ export function UsersPage() {
             ) : (
               users?.map((user: UserModel) => (
                 <TableRow key={user.id}>
-                  <TableCell className="font-medium text-foreground py-4">
-                    {displayName(user)}
+                  <TableCell className="py-4">
+                    <button
+                      className="font-medium text-foreground hover:text-[hsl(209,100%,32%)] hover:underline text-left"
+                      onClick={() => setProfileUser(user)}
+                    >
+                      {displayName(user)}
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {displayEmployeeId(user)}
@@ -206,9 +213,12 @@ export function UsersPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-medium text-foreground truncate">
+                  <button
+                    className="font-medium text-foreground hover:text-[hsl(209,100%,32%)] hover:underline truncate text-left"
+                    onClick={() => setProfileUser(user)}
+                  >
                     {displayName(user)}
-                  </p>
+                  </button>
                   <p className="text-sm text-muted-foreground">
                     {displayEmployeeId(user)}
                   </p>
@@ -268,6 +278,12 @@ export function UsersPage() {
         isOpen={!!editingUser}
         user={editingUser}
         onClose={() => setEditingUser(null)}
+      />
+
+      <UserProfileModal
+        user={profileUser}
+        isOpen={!!profileUser}
+        onClose={() => setProfileUser(null)}
       />
 
       <AlertDialog

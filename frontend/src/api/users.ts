@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import type { MyCommitteesReport } from "./committees";
 
 export interface User {
   id?: number;
@@ -93,5 +94,10 @@ export const usersService = {
   getRoles: async () => {
     const response = await apiClient.get("/api/users/roles/");
     return response.data;
+  },
+
+  getUserMemberships: async (employeeId: string): Promise<MyCommitteesReport> => {
+    const response = await apiClient.get(`/api/users/users/${employeeId}/memberships/`);
+    return response.data?.data ?? { active: [], past: [], counts: { active: 0, past: 0 } };
   },
 };
