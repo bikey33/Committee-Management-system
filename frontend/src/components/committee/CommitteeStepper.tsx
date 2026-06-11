@@ -1,7 +1,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { Check, Lock } from "lucide-react";
-import type { Committee, CommitteePhase } from "@/api/committees";
+import type { Committee } from "@/api/committees";
 
 type StepState = "complete" | "current" | "upcoming";
 
@@ -14,25 +14,33 @@ interface Step {
 
 const PRIMARY = "hsl(209,100%,32%)";
 
-function isClosedStatus(status?: string) {
-  const s = (status || "").toLowerCase();
-  return s === "completed" || s === "dissolved";
+const IN_PROGRESS_STATUSES = ["active"];
+const COMPLETED_STATUSES = ["completed", "dissolved"];
+
+function isInProgressStage(committee: Committee) {
+  return IN_PROGRESS_STATUSES.includes(committee.committee_status || "");
+}
+
+function isCompletedStage(committee: Committee) {
+  return COMPLETED_STATUSES.includes(committee.committee_status || "");
 }
 
 function StatusPill({ committee }: { committee: Committee }) {
-  const finalDone = !!committee.finalization_phase_completed;
-  const closed = isClosedStatus(committee.committee_status) || finalDone;
+  const done = isCompletedStage(committee);
+  const inProg = isInProgressStage(committee);
   const overdue =
-    !closed &&
+    !done &&
     !!committee.deadline &&
     new Date(committee.deadline).getTime() < Date.now();
 
-  const label = closed ? "Closed" : overdue ? "Overdue" : "Active";
-  const classes = closed
+  const label = done ? "Completed" : overdue ? "Overdue" : inProg ? "In Progress" : "Initialization";
+  const classes = done
     ? "bg-slate-100 text-slate-600 border-slate-200"
     : overdue
     ? "bg-rose-50 text-rose-600 border-rose-200"
-    : "bg-emerald-50 text-emerald-600 border-emerald-200";
+    : inProg
+    ? "bg-blue-50 text-blue-600 border-blue-200"
+    : "bg-amber-50 text-amber-600 border-amber-200";
 
   return (
     <span
@@ -44,7 +52,7 @@ function StatusPill({ committee }: { committee: Committee }) {
       <span
         className={cn(
           "h-1.5 w-1.5 rounded-full",
-          closed ? "bg-slate-400" : overdue ? "bg-rose-500" : "bg-emerald-500"
+          done ? "bg-slate-400" : overdue ? "bg-rose-500" : inProg ? "bg-blue-500" : "bg-amber-500"
         )}
       />
       {label}
@@ -57,44 +65,29 @@ interface CommitteeStepperProps {
 }
 
 export function CommitteeStepper({ committee }: CommitteeStepperProps) {
-  const initDone = !!committee.initialization_phase_completed;
-  const finalDone = !!committee.finalization_phase_completed;
-  const closed = isClosedStatus(committee.committee_status) || finalDone;
+  const inProgress = isInProgressStage(committee);
+  const done = isCompletedStage(committee);
 
   const steps: Step[] = [
     {
       key: "initialization",
       label: "Initialization",
-      caption: initDone ? "Completed" : "In progress",
-      state: initDone ? "complete" : "current",
+      caption: inProgress || done ? "Completed" : "In progress",
+      state: inProgress || done ? "complete" : "current",
     },
     {
       key: "in_progress",
       label: "In Progress",
-      caption: !initDone ? "Locked" : finalDone ? "Completed" : "In progress",
-      state: !initDone ? "upcoming" : finalDone ? "complete" : "current",
+      caption: done ? "Completed" : inProgress ? "In progress" : "Locked",
+      state: done ? "complete" : inProgress ? "current" : "upcoming",
     },
     {
       key: "completed",
       label: "Completed",
-      caption: closed ? "Closed" : "Pending",
-      state: closed ? "complete" : finalDone ? "current" : "upcoming",
+      caption: done ? "Closed" : "Pending",
+      state: done ? "complete" : "upcoming",
     },
   ];
-
-  // The active phase whose checkpoint progress we surface in the bar.
-  const phases: CommitteePhase[] = committee.phases || [];
-  const activePhaseKey = !initDone ? "initialization" : !finalDone ? "finalization" : null;
-  const activePhase = activePhaseKey
-    ? phases.find((p) => p.phase === activePhaseKey)
-    : null;
-
-  const checkpoints = activePhase?.checkpoints || [];
-  const completedCount = checkpoints.filter((c) => c.is_completed).length;
-  const totalCount = checkpoints.length;
-  const pct = activePhase
-    ? activePhase.completion_percentage ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0)
-    : 100;
 
   const headingStep = steps.find((s) => s.state === "current") || steps[steps.length - 1];
 
@@ -106,7 +99,7 @@ export function CommitteeStepper({ committee }: CommitteeStepperProps) {
             Committee Progress
           </p>
           <h3 className="text-lg font-bold text-slate-900">
-            {closed ? "Completed" : headingStep.label}
+            {done ? "Completed" : headingStep.label}
           </h3>
         </div>
         <StatusPill committee={committee} />
@@ -177,26 +170,6 @@ export function CommitteeStepper({ committee }: CommitteeStepperProps) {
           );
         })}
       </div>
-
-      {/* Checkpoint progress for the active phase */}
-      {activePhase && totalCount > 0 && (
-        <div className="mt-6">
-          <div className="mb-1.5 flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-600">
-              {activePhase.name} checkpoints
-            </span>
-            <span className="font-bold text-slate-700">
-              {completedCount}/{totalCount} · {pct}%
-            </span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full transition-all"
-              style={{ width: `${pct}%`, backgroundColor: PRIMARY }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

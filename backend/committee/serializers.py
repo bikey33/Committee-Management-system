@@ -138,6 +138,7 @@ class CommitteeSerializer(serializers.ModelSerializer):
             'deadline', 'formation_date', 'assigned_date', 'specification_submission_date',
             'review_date', 'completion_date', 'decision_date',
             'formation_letter', 'formationLetterURL', 'approval_status', 'committee_status',
+            'completion_notes',
             'members', 'membersList', 'members_count', 'createdBy', 'createdAt', 'updatedAt',
             'current_phase', 'phases', 'initialization_phase_completed', 'finalization_phase_completed',
             'is_closed', 'is_overdue'

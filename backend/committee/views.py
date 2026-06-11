@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .permissions import CommitteePermission
-from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember, CommitteePhaseCheckpoint
+from .models import Committee, CommitteeMembership, CommitteeRole, ReviewCommitteeDefaultMember, CommitteePhaseCheckpoint, CommitteeDocument
 from .notifications import notify_committee_membership
 from .signals import ensure_stakeholder_for_membership, deactivate_stakeholder_for_membership
 from .models import is_committee_closed, is_committee_overdue
@@ -1165,6 +1165,128 @@ class CommitteePhaseTransitionView(APIView):
                 {'status': 'error', 'message': 'An error occurred'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ---------------------------------------------------------------------------
+# Committee status transition
+# ---------------------------------------------------------------------------
+
+class CommitteeStatusView(APIView):
+    """Update only the committee_status field without going through full serializer validation."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, committee_id):
+        try:
+            committee = Committee.objects.get(id=committee_id)
+        except Committee.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Committee not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        new_status = request.data.get('committee_status')
+        valid_statuses = [s[0] for s in Committee.COMMITTEE_STATUS_CHOICES]
+        if new_status not in valid_statuses:
+            return Response(
+                {'status': 'error', 'message': f'Invalid status. Valid choices: {valid_statuses}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        committee.committee_status = new_status
+        update_fields = ['committee_status', 'updated_at']
+        notes = request.data.get('completion_notes')
+        if notes is not None:
+            committee.completion_notes = notes
+            update_fields.append('completion_notes')
+        committee.save(update_fields=update_fields)
+        return Response({'status': 'success', 'data': {'committee_status': committee.committee_status}})
+
+
+# ---------------------------------------------------------------------------
+# Committee document endpoints
+# ---------------------------------------------------------------------------
+
+class CommitteeDocumentView(APIView):
+    """List and upload documents for the In Progress phase."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, committee_id):
+        try:
+            committee = Committee.objects.get(id=committee_id)
+        except Committee.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        docs = committee.documents.order_by('-uploaded_at')
+        data = [
+            {
+                'id': d.id,
+                'name': d.name or d.file.name.split('/')[-1],
+                'url': request.build_absolute_uri(d.file.url) if d.file else None,
+                'uploaded_at': d.uploaded_at,
+                'uploaded_by': d.uploaded_by.get_full_name() if d.uploaded_by else None,
+            }
+            for d in docs
+        ]
+        return Response({'status': 'success', 'data': data})
+
+    def post(self, request, committee_id):
+        try:
+            committee = Committee.objects.get(id=committee_id)
+        except Committee.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'status': 'error', 'message': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        name = request.data.get('name', '') or file.name
+        doc = CommitteeDocument.objects.create(
+            committee=committee,
+            file=file,
+            name=name,
+            uploaded_by=request.user,
+        )
+        return Response({
+            'status': 'success',
+            'data': {
+                'id': doc.id,
+                'name': doc.name,
+                'url': request.build_absolute_uri(doc.file.url),
+                'uploaded_at': doc.uploaded_at,
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class CommitteeDocumentDetailView(APIView):
+    """Delete a single document."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, committee_id, doc_id):
+        try:
+            doc = CommitteeDocument.objects.get(id=doc_id, committee_id=committee_id)
+        except CommitteeDocument.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        doc.file.delete(save=False)
+        doc.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CommitteeDocumentServeView(APIView):
+    """Stream a committee document through Django so storage credentials stay server-side."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, committee_id, doc_id):
+        import mimetypes
+        try:
+            doc = CommitteeDocument.objects.get(id=doc_id, committee_id=committee_id)
+        except CommitteeDocument.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        storage = doc.file.storage
+        file_name = doc.file.name
+        try:
+            content_type, _ = mimetypes.guess_type(file_name)
+            content_type = content_type or 'application/octet-stream'
+            response = FileResponse(storage.open(file_name, 'rb'), content_type=content_type)
+            display_name = file_name.split('/')[-1]
+            response['Content-Disposition'] = f'inline; filename="{display_name}"'
+            return response
+        except FileNotFoundError:
+            return Response({'status': 'error', 'message': 'File not found in storage'}, status=status.HTTP_404_NOT_FOUND)
 
 
 # ---------------------------------------------------------------------------

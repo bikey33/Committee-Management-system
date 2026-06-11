@@ -39,6 +39,7 @@ export interface Committee {
   finalization_phase_completed?: boolean;
   is_closed?: boolean;
   is_overdue?: boolean;
+  completion_notes?: string | null;
 }
 
 export interface MyCommitteeReportItem {
@@ -70,6 +71,14 @@ export interface CommitteeStats {
   by_status: { committee_status: string; count: number }[];
   by_type: { committee_type: string; count: number }[];
   by_office: { office_id: number | null; office_name: string | null; count: number }[];
+}
+
+export interface CommitteeDocument {
+  id: number;
+  name: string;
+  url: string | null;
+  uploaded_at: string;
+  uploaded_by: string | null;
 }
 
 export const committeesService = {
@@ -136,6 +145,44 @@ export const committeesService = {
       params: officeId ? { office_id: officeId } : {},
     });
     return { scope: response.data?.scope, ...(response.data?.data ?? {}) };
+  },
+
+  transitionStatus: async (id: string, committeeStatus: string, completionNotes?: string) => {
+    const response = await apiClient.patch(`/api/committee/committees/${id}/status/`, {
+      committee_status: committeeStatus,
+      ...(completionNotes !== undefined ? { completion_notes: completionNotes } : {}),
+    });
+    return response.data;
+  },
+
+  getDocuments: async (committeeId: string) => {
+    const response = await apiClient.get(`/api/committee/committees/${committeeId}/documents/`);
+    return (response.data?.data ?? []) as CommitteeDocument[];
+  },
+
+  uploadDocument: async (committeeId: string, file: File, name?: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (name) formData.append('name', name);
+    const response = await apiClient.post(`/api/committee/committees/${committeeId}/documents/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data?.data as CommitteeDocument;
+  },
+
+  deleteDocument: async (committeeId: string, docId: number) => {
+    await apiClient.delete(`/api/committee/committees/${committeeId}/documents/${docId}/`);
+  },
+
+  viewDocument: async (committeeId: string, docId: number) => {
+    const response = await apiClient.get(
+      `/api/committee/committees/${committeeId}/documents/${docId}/serve/`,
+      { responseType: "blob" }
+    );
+    const blob = new Blob([response.data], { type: response.headers["content-type"] || "application/octet-stream" });
+    const url = window.URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => window.URL.revokeObjectURL(url), 10_000);
   },
 
   addMember: async (committeeId: string, memberData: any) => {

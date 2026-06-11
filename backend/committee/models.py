@@ -72,6 +72,7 @@ class Committee(models.Model):
     deadline = models.DateField(null=True, blank=True)
     specification_title = models.CharField(max_length=255, blank=True, null=True)
     specification_description = models.TextField(blank=True, null=True)
+    completion_notes = models.TextField(blank=True, null=True, help_text="Remarks entered when marking the committee as completed")
     
     # Phase management
     current_phase = models.CharField(
@@ -193,6 +194,24 @@ def is_committee_overdue(committee) -> bool:
     if is_committee_closed(committee):
         return False
     return bool(committee.deadline) and committee.deadline < timezone.localdate()
+
+
+class CommitteeDocument(models.Model):
+    """Files uploaded during the In Progress phase of a committee."""
+    committee = models.ForeignKey(Committee, related_name='documents', on_delete=models.CASCADE)
+    file = models.FileField(upload_to='committee_documents/')
+    name = models.CharField(max_length=255, blank=True)
+    uploaded_by = models.ForeignKey(
+        CustomUser, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='uploaded_committee_documents'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.name or self.file.name} – {self.committee.name}"
 
 
 class ReviewCommitteeDefaultMember(models.Model):

@@ -12,6 +12,7 @@ from .views import (
     ReviewCommitteeDefaultMembersDeleteView, CommitteePhaseCheckpointView,
     CommitteePhaseCheckpointDetailView, CommitteePhaseTransitionView,
     MyCommitteesReportView, OfficeCommitteesView, CommitteeStatsView,
+    CommitteeDocumentView, CommitteeDocumentDetailView, CommitteeDocumentServeView, CommitteeStatusView,
 )
 
 urlpatterns = [
@@ -46,4 +47,10 @@ urlpatterns = [
     path('committees/<int:committee_id>/checkpoints/', CommitteePhaseCheckpointView.as_view(), name='committee-checkpoints'),
     path('checkpoints/<int:checkpoint_id>/', CommitteePhaseCheckpointDetailView.as_view(), name='checkpoint-detail'),
     path('committees/<int:committee_id>/phase-transition/', CommitteePhaseTransitionView.as_view(), name='phase-transition'),
+    # Status transition
+    path('committees/<int:committee_id>/status/', CommitteeStatusView.as_view(), name='committee-status'),
+    # In-progress documents
+    path('committees/<int:committee_id>/documents/', CommitteeDocumentView.as_view(), name='committee-documents'),
+    path('committees/<int:committee_id>/documents/<int:doc_id>/', CommitteeDocumentDetailView.as_view(), name='committee-document-detail'),
+    path('committees/<int:committee_id>/documents/<int:doc_id>/serve/', CommitteeDocumentServeView.as_view(), name='committee-document-serve'),
 ]

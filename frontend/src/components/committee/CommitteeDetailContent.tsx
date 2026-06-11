@@ -1,17 +1,22 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
+import { committeesService } from "@/api/committees";
 import { cn } from "@/lib/utils";
 import { getRoleConfig } from "@/config/committeeRoleConfig";
 import type { Committee } from "@/api/committees";
 import CommitteeStepper from "./CommitteeStepper";
-import FinalizationSection from "./FinalizationSection";
+import InProgressSection from "./InProgressSection";
+import CompletedSection from "./CompletedSection";
+import { toast as sonnerToast } from "sonner";
 import {
   Building2,
+  CheckCircle2,
   Clock,
   Download,
   Eye,
@@ -20,6 +25,7 @@ import {
   Info,
   Mail,
   Phone,
+  PlayCircle,
   Target,
   User,
   Users,
@@ -32,6 +38,26 @@ interface CommitteeDetailContentProps {
 
 const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) => {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [transitioning, setTransitioning] = useState(false);
+
+  const isInitialization = !["active", "completed", "dissolved"].includes(committee.committee_status || "");
+  const isInProgress = committee.committee_status === "active";
+  const isCompleted = ["completed", "dissolved"].includes(committee.committee_status || "");
+
+  const handleMarkInProgress = async () => {
+    setTransitioning(true);
+    try {
+      await committeesService.transitionStatus(id, "active");
+      queryClient.invalidateQueries({ queryKey: ["committee", id] });
+      queryClient.invalidateQueries({ queryKey: ["committees"] });
+      sonnerToast.success("Committee moved to In Progress");
+    } catch {
+      sonnerToast.error("Failed to update status");
+    } finally {
+      setTransitioning(false);
+    }
+  };
 
   const getFirstValue = (...values: Array<any>) => {
     for (const value of values) {
@@ -210,11 +236,24 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
         {/* Phase 1 - Initialization */}
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Phase 1</h3>
-              <p className="text-sm font-semibold text-slate-700 mt-1">Initialization</p>
-            </div>
-            <Button variant="outline" size="sm">Reopen</Button>
+            <div />
+            {isInitialization && (
+              <Button
+                size="sm"
+                onClick={handleMarkInProgress}
+                disabled={transitioning}
+                className="bg-[hsl(209,100%,32%)] hover:bg-[hsl(209,100%,25%)] text-white font-bold shrink-0"
+              >
+                <PlayCircle className="h-4 w-4 mr-1.5" />
+                {transitioning ? "Saving…" : "Mark as In Progress"}
+              </Button>
+            )}
+            {isInProgress && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-xs font-bold text-emerald-600">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Initialization Done
+              </span>
+            )}
           </div>
 
           {/* Office Card */}
@@ -397,17 +436,21 @@ const CommitteeDetailContent = ({ committee, id }: CommitteeDetailContentProps) 
           </div>
         </div>
 
-        {/* Phase 2 - Finalization */}
-        {committee.initialization_phase_completed && (
-          <FinalizationSection
+        {/* Phase 2 - In Progress */}
+        {isInProgress && (
+          <InProgressSection
             committeeId={id}
-            isInitializationComplete={committee.initialization_phase_completed}
-            onReportSubmit={() => {
-              toast({
-                title: "Success",
-                description: "Report submitted successfully",
-              });
+            onTransitioned={() => {
+              queryClient.invalidateQueries({ queryKey: ["committee", id] });
             }}
+          />
+        )}
+
+        {/* Phase 3 - Completed */}
+        {isCompleted && (
+          <CompletedSection
+            committeeId={id}
+            completionNotes={(committee as any).completion_notes}
           />
         )}
       </div>
