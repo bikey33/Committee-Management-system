@@ -7,10 +7,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_superadmin(user):
-    """Centralized helper to check if user has admin/superadmin privileges.
-    Bypassed to return True for now.
-    """
-    return bool(user and user.is_authenticated)
+    """Centralized helper to check if user has admin/superadmin privileges."""
+    return bool(
+        user and user.is_authenticated and (
+            getattr(user, 'is_superuser', False) or user.is_super_admin()
+        )
+    )
 
 
 def get_queryset_for_user(user, queryset, action='view'):

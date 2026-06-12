@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Building2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, Search } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -13,9 +13,11 @@ import {
 import { officesService, Office } from "@/api/offices";
 import { OfficeFormModal } from "@/components/office/OfficeFormModal";
 import { DirectorateFormModal } from "@/components/office/DirectorateFormModal";
+import { PermissionGate } from "@/components/PermissionGate";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
 import { TablePagination } from "@/components/common/TablePagination";
 
@@ -27,17 +29,21 @@ export function OfficesPage() {
   const [isDirectorateModalOpen, setIsDirectorateModalOpen] = useState(false);
   const [selectedOffice, setSelectedOffice] = useState<Office | null>(null);
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
 
   const { data: offices, isLoading, isError } = useQuery({
     queryKey: ["offices"],
     queryFn: officesService.getAll,
   });
 
-  const totalItems = offices?.length ?? 0;
+  const filteredOffices = (offices ?? []).filter((o) =>
+    o.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const totalItems = filteredOffices.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
-  // Clamp page if the list shrank (e.g. after a delete).
   const currentPage = Math.min(page, totalPages);
-  const pagedOffices: Office[] | undefined = offices?.slice(
+  const pagedOffices = filteredOffices.slice(
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE
   );
@@ -101,23 +107,25 @@ export function OfficesPage() {
           </h1>
           <p className="text-muted-foreground mt-1">Manage organizational offices and directorates</p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button
-            variant="outline"
-            onClick={() => setIsDirectorateModalOpen(true)}
-            className="w-full flex items-center justify-center gap-2 sm:w-auto"
-          >
-            <Plus size={16} />
-            Add Directorate
-          </Button>
-          <Button
-            onClick={handleCreateNew}
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
-          >
-            <Plus size={16} />
-            New Office
-          </Button>
-        </div>
+        <PermissionGate codename="settings.offices">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              variant="outline"
+              onClick={() => setIsDirectorateModalOpen(true)}
+              className="w-full flex items-center justify-center gap-2 sm:w-auto"
+            >
+              <Plus size={16} />
+              Add Directorate
+            </Button>
+            <Button
+              onClick={handleCreateNew}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
+            >
+              <Plus size={16} />
+              New Office
+            </Button>
+          </div>
+        </PermissionGate>
       </div>
 
       <Card className="overflow-hidden border-t-4 border-t-[hsl(209,100%,32%)] shadow-sm">
@@ -140,15 +148,17 @@ export function OfficesPage() {
                     </div>
                     {directorate.description ? <p className="mt-1 text-sm text-slate-500">{directorate.description}</p> : null}
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="self-start text-destructive hover:text-destructive hover:bg-destructive/5 sm:self-auto"
-                    disabled={deleteDirectorateMutation.isPending}
-                    onClick={() => deleteDirectorateMutation.mutate(directorate.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <PermissionGate codename="settings.offices">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="self-start text-destructive hover:text-destructive hover:bg-destructive/5 sm:self-auto"
+                      disabled={deleteDirectorateMutation.isPending}
+                      onClick={() => deleteDirectorateMutation.mutate(directorate.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </PermissionGate>
                 </div>
               ))
             ) : (
@@ -157,6 +167,17 @@ export function OfficesPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Search */}
+      <div className="relative sm:max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          placeholder="Search offices by name…"
+          className="pl-9"
+        />
+      </div>
 
       {/* Table Area */}
       <div className="border rounded-xl bg-card shadow-sm overflow-hidden">
@@ -183,10 +204,10 @@ export function OfficesPage() {
                   Error loading offices. Please try again.
                 </TableCell>
               </TableRow>
-            ) : offices?.length === 0 ? (
+            ) : filteredOffices.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                  No offices found. Create one to get started.
+                  {search ? `No offices matching "${search}".` : "No offices found. Create one to get started."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -204,23 +225,25 @@ export function OfficesPage() {
                     {formatDirectorate(office)}
                   </TableCell>
                   <TableCell className="text-right pr-6">
-                    <div className="flex items-center justify-end gap-3">
-                      <button 
-                        onClick={() => handleEdit(office)}
-                        className="text-muted-foreground hover:text-foreground transition-colors"
-                        title="Edit Office"
-                      >
-                        <Pencil size={18} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(office.id)}
-                        disabled={deleteMutation.isPending}
-                        className="text-destructive/80 hover:text-destructive transition-colors disabled:opacity-50"
-                        title="Delete Office"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
+                    <PermissionGate codename="settings.offices">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => handleEdit(office)}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                          title="Edit Office"
+                        >
+                          <Pencil size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(office.id)}
+                          disabled={deleteMutation.isPending}
+                          className="text-destructive/80 hover:text-destructive transition-colors disabled:opacity-50"
+                          title="Delete Office"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </PermissionGate>
                   </TableCell>
                 </TableRow>
               ))

@@ -26,6 +26,7 @@ import { UserEditModal } from "@/components/user/UserEditModal";
 import { UserProfileModal } from "@/components/user/UserProfileModal";
 import { Badge } from "@/components/ui/badge";
 import { TablePagination } from "@/components/common/TablePagination";
+import { PermissionGate } from "@/components/PermissionGate";
 import { toast } from "sonner";
 
 const PAGE_SIZE = 10;
@@ -78,26 +79,28 @@ export function UsersPage() {
       : "bg-slate-300 text-slate-700 font-medium border-transparent rounded-full px-3";
 
   const ActionButtons = ({ user }: { user: UserModel }) => (
-    <div className="flex items-center justify-end gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-        onClick={() => setEditingUser(user)}
-        aria-label="Edit user"
-      >
-        <Pencil size={16} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-        onClick={() => setDeletingUser(user)}
-        aria-label="Delete user"
-      >
-        <Trash2 size={16} />
-      </Button>
-    </div>
+    <PermissionGate codename="users.manage">
+      <div className="flex items-center justify-end gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          onClick={() => setEditingUser(user)}
+          aria-label="Edit user"
+        >
+          <Pencil size={16} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          onClick={() => setDeletingUser(user)}
+          aria-label="Delete user"
+        >
+          <Trash2 size={16} />
+        </Button>
+      </div>
+    </PermissionGate>
   );
 
   return (
@@ -111,13 +114,15 @@ export function UsersPage() {
           </h1>
           <p className="text-muted-foreground mt-1">Manage system users and access</p>
         </div>
-        <Button 
-          onClick={() => setIsFormOpen(true)}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
-        >
-          <Plus size={16} />
-          New User
-        </Button>
+        <PermissionGate codename="users.manage">
+          <Button
+            onClick={() => setIsFormOpen(true)}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
+          >
+            <Plus size={16} />
+            New User
+          </Button>
+        </PermissionGate>
       </div>
 
       {/* Table Area — desktop (md and up) */}

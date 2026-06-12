@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PermissionGate } from "@/components/PermissionGate";
 import {
   Table,
   TableBody,
@@ -115,11 +116,6 @@ export function ReportsPage() {
     name: capitalize(s.committee_type),
     count: s.count,
   }));
-  const officeData = (stats?.by_office ?? []).map((s) => ({
-    name: s.office_name || "Unassigned",
-    count: s.count,
-  }));
-
   const isOrg = stats?.scope === "org" || stats?.scope === "office";
 
   return (
@@ -152,7 +148,7 @@ export function ReportsPage() {
       </div>
 
       {/* Charts */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card className="border-border/60 shadow-sm">
           <CardHeader>
             <CardTitle className="text-sm font-medium text-muted-foreground">By status</CardTitle>
@@ -196,25 +192,6 @@ export function ReportsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/60 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">By office</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[260px]">
-            {officeData.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No data.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={officeData} layout="vertical" margin={{ left: 12 }}>
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#059669" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       {/* Lists */}
@@ -223,10 +200,12 @@ export function ReportsPage() {
           <TabsTrigger value="active">My Active ({myReport?.counts.active ?? 0})</TabsTrigger>
           <TabsTrigger value="past">My Past ({myReport?.counts.past ?? 0})</TabsTrigger>
           <TabsTrigger value="office">My Office ({officeCommittees.length})</TabsTrigger>
-          <TabsTrigger value="userwise" className="flex items-center gap-1.5">
-            <Users className="h-3.5 w-3.5" />
-            User-wise
-          </TabsTrigger>
+          <PermissionGate codename="committee.view_cross_office">
+            <TabsTrigger value="userwise" className="flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5" />
+              User-wise
+            </TabsTrigger>
+          </PermissionGate>
         </TabsList>
 
         <TabsContent value="active">
@@ -247,9 +226,11 @@ export function ReportsPage() {
         <TabsContent value="office">
           <OfficeCommitteeTable committees={officeCommittees} onView={setDetailId} />
         </TabsContent>
-        <TabsContent value="userwise">
-          <UserWiseReport onView={setDetailId} />
-        </TabsContent>
+        <PermissionGate codename="committee.view_cross_office">
+          <TabsContent value="userwise">
+            <UserWiseReport onView={setDetailId} />
+          </TabsContent>
+        </PermissionGate>
       </Tabs>
 
       <CommitteeDetailModal id={detailId} isOpen={!!detailId} onClose={() => setDetailId(null)} />

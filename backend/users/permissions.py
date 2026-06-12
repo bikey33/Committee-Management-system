@@ -13,7 +13,9 @@ def _get_role_name(user):
 class IsSuperAdmin(BasePermission):
     message = "Only Super Admin can perform this action."
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated)
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return getattr(request.user, 'is_superuser', False) or request.user.is_super_admin()
 
 class OfficeAdminOrAbove(BasePermission):
     message = "Office Admin or above is required."
@@ -28,7 +30,11 @@ def HasPermission(codename: str):
     class _HasPermission(BasePermission):
         message = f"Permission '{codename}' is required."
         def has_permission(self, request, view):
-            return bool(request.user and request.user.is_authenticated)
+            if not (request.user and request.user.is_authenticated):
+                return False
+            if getattr(request.user, 'is_superuser', False) or request.user.is_super_admin():
+                return True
+            return request.user.has_rbac_permission(codename)
     _HasPermission.__name__ = f'HasPermission_{codename.replace(".", "_")}'
     _HasPermission.__qualname__ = _HasPermission.__name__
     return _HasPermission

@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { TablePagination } from "@/components/common/TablePagination";
 import { employeesService, Employee } from "@/api/employees";
 import { EmployeeFormModal } from "@/components/employee/EmployeeFormModal";
+import { PermissionGate } from "@/components/PermissionGate";
 
 const PAGE_SIZE = 10;
 
@@ -64,13 +65,15 @@ export function EmployeesPage() {
             The employee directory. User accounts are created from these employees.
           </p>
         </div>
-        <Button
-          onClick={openCreate}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
-        >
-          <Plus size={16} />
-          New Employee
-        </Button>
+        <PermissionGate codename="users.manage">
+          <Button
+            onClick={openCreate}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
+          >
+            <Plus size={16} />
+            New Employee
+          </Button>
+        </PermissionGate>
       </div>
 
       {/* Search */}
@@ -156,15 +159,17 @@ export function EmployeesPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        onClick={() => openEdit(emp)}
-                        aria-label="Edit employee"
-                      >
-                        <Pencil size={16} />
-                      </Button>
+                      <PermissionGate codename="users.manage">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => openEdit(emp)}
+                          aria-label="Edit employee"
+                        >
+                          <Pencil size={16} />
+                        </Button>
+                      </PermissionGate>
                     </TableCell>
                   </TableRow>
                 ))
@@ -196,15 +201,17 @@ export function EmployeesPage() {
                   <p className="font-medium text-foreground truncate">{emp.name || "N/A"}</p>
                   <p className="text-sm text-muted-foreground">{emp.employee_id}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={() => openEdit(emp)}
-                  aria-label="Edit employee"
-                >
-                  <Pencil size={16} />
-                </Button>
+                <PermissionGate codename="users.manage">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    onClick={() => openEdit(emp)}
+                    aria-label="Edit employee"
+                  >
+                    <Pencil size={16} />
+                  </Button>
+                </PermissionGate>
               </div>
               <dl className="mt-3 grid grid-cols-1 gap-2 text-sm">
                 <div className="flex justify-between gap-3">

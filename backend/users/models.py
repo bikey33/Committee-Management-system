@@ -69,6 +69,7 @@ class Permission(models.Model):
         ('contract',        '7. Contract Preparation'),
         ('bidding',         '8. Bidders & Bids'),
         ('reports',         'Reports & Analytics'),
+        ('committee',       'Committee Management'),
     ]
 
     codename    = models.CharField(max_length=100, unique=True)   # e.g. 'procurement_plan.create'
@@ -318,8 +319,13 @@ class CustomUser(AbstractUser):
         return codename in self.get_permission_codenames()
 
     def is_super_admin(self) -> bool:
-        """True if the user's role is named 'Super Admin'."""
-        return bool(self.user_role and self.user_role.name == 'Super Admin')
+        """True if Django superuser flag is set, or role name is any variant of 'Super Admin'."""
+        if self.is_superuser:
+            return True
+        if self.user_role:
+            normalized = self.user_role.name.lower().replace(' ', '')
+            return normalized == 'superadmin'
+        return False
 
 
 # ---------------------------------------------------------------------------

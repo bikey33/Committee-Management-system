@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { PermissionGate } from "@/components/PermissionGate";
 import { CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -110,37 +111,27 @@ export function InProgressSection({ committeeId, onTransitioned }: InProgressSec
           <div>
             <h3 className="text-base font-semibold text-white">In Progress</h3>
           </div>
-          <Button
-            size="sm"
-            onClick={openDialog}
-            className="bg-white text-[hsl(209,100%,32%)] hover:bg-blue-50 font-bold border-0 shrink-0"
-          >
-            <CheckCircle2 className="h-4 w-4 mr-1.5" />
-            Mark as Completed
-          </Button>
+          <PermissionGate codename="committee.manage">
+            <Button
+              size="sm"
+              onClick={openDialog}
+              className="bg-white text-[hsl(209,100%,32%)] hover:bg-blue-50 font-bold border-0 shrink-0"
+            >
+              <CheckCircle2 className="h-4 w-4 mr-1.5" />
+              Mark as Completed
+            </Button>
+          </PermissionGate>
         </div>
 
         <CardContent className="p-6 space-y-5">
           {/* Ongoing document uploads */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-[hsl(209,100%,32%)]" />
-                <span className="text-sm font-semibold text-slate-800">Documents</span>
-                <span className="text-xs text-slate-400">
-                  ({docs.length} file{docs.length !== 1 ? "s" : ""})
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadMutation.isPending}
-                className="text-xs font-bold border-[hsl(209,100%,32%)] text-[hsl(209,100%,32%)] hover:bg-blue-50"
-              >
-                <Upload className="h-3.5 w-3.5 mr-1.5" />
-                {uploadMutation.isPending ? "Uploading…" : "Upload Files"}
-              </Button>
+            <div className="flex items-center gap-2 mb-3">
+              <FileText className="h-4 w-4 text-[hsl(209,100%,32%)]" />
+              <span className="text-sm font-semibold text-slate-800">Documents</span>
+              <span className="text-xs text-slate-400">
+                ({docs.length} file{docs.length !== 1 ? "s" : ""})
+              </span>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -182,25 +173,29 @@ export function InProgressSection({ committeeId, onTransitioned }: InProgressSec
                     >
                       View
                     </button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-slate-400 hover:text-destructive hover:bg-destructive/10 shrink-0"
-                      onClick={() => deleteMutation.mutate(doc.id)}
-                      disabled={deleteMutation.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <PermissionGate codename="committee.manage">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-slate-400 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                        onClick={() => deleteMutation.mutate(doc.id)}
+                        disabled={deleteMutation.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </PermissionGate>
                   </div>
                 ))}
 
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 py-2.5 text-xs font-medium text-slate-400 hover:border-[hsl(209,100%,32%)] hover:text-[hsl(209,100%,32%)] transition-colors"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  Add more files
-                </button>
+                <PermissionGate codename="committee.manage">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 py-2.5 text-xs font-medium text-slate-400 hover:border-[hsl(209,100%,32%)] hover:text-[hsl(209,100%,32%)] transition-colors"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Add more files
+                  </button>
+                </PermissionGate>
               </div>
             )}
           </div>

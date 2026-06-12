@@ -17,6 +17,7 @@ import CommitteeListTable from "@/components/committee/CommitteeListTable";
 import { CommitteeFormModal } from "@/components/committee/CommitteeFormModal";
 import { CommitteeMembersModal } from "@/components/committee/CommitteeMembersModal";
 import CommitteeDetailModal from "@/components/committee/CommitteeDetailModal";
+import { PermissionGate } from "@/components/PermissionGate";
 import { toast } from "sonner";
 
 export function CommitteesPage() {
@@ -90,13 +91,15 @@ export function CommitteesPage() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Committees</h1>
           <p className="text-muted-foreground mt-1">All committees across your offices</p>
         </div>
-        <Button 
-          onClick={handleCreateNew}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
-        >
-          <Plus size={16} />
-          New Committee
-        </Button>
+        <PermissionGate codename="committee.create">
+          <Button
+            onClick={handleCreateNew}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2 sm:w-auto"
+          >
+            <Plus size={16} />
+            New Committee
+          </Button>
+        </PermissionGate>
       </div>
 
       {/* Table Area */}

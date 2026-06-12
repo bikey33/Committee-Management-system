@@ -308,8 +308,8 @@ class UserSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             '_id', 'employeeId', 'name', 'email', 'phoneNumber', 'department', 'designation',
-            'isActive', 'otpEnabled', 'user_role', 'user_role_id', 'office', 'office_id', 
-            'working_office', 'position_details', 'last_login', 'is_staff',
+            'isActive', 'otpEnabled', 'user_role', 'user_role_id', 'office', 'office_id',
+            'working_office', 'position_details', 'last_login', 'is_staff', 'is_superuser',
             'user_role_details', 'office_details', 'working_office_details', 'permissions'
         ]
         extra_kwargs = {

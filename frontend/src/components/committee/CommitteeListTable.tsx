@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Search, Eye, Users, Pencil, Trash2 } from "lucide-react";
+import { PermissionGate } from "@/components/PermissionGate";
 
 interface Props {
   committees: Committee[];
@@ -174,27 +175,29 @@ const CommitteeListTable = ({
                         >
                           <Eye size={18} />
                         </button>
-                        <button
-                          onClick={() => onManageMembers(committee)}
-                          className="text-muted-foreground hover:text-primary transition-colors"
-                          title="Manage Members"
-                        >
-                          <Users size={18} />
-                        </button>
-                        <button
-                          onClick={() => onEdit(committee)}
-                          className="text-muted-foreground hover:text-foreground transition-colors"
-                          title="Edit Committee"
-                        >
-                          <Pencil size={18} />
-                        </button>
-                        <button
-                          onClick={() => onDelete(committee)}
-                          className="text-destructive/80 hover:text-destructive transition-colors"
-                          title="Delete Committee"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        <PermissionGate codename="committee.manage">
+                          <button
+                            onClick={() => onManageMembers(committee)}
+                            className="text-muted-foreground hover:text-primary transition-colors"
+                            title="Manage Members"
+                          >
+                            <Users size={18} />
+                          </button>
+                          <button
+                            onClick={() => onEdit(committee)}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                            title="Edit Committee"
+                          >
+                            <Pencil size={18} />
+                          </button>
+                          <button
+                            onClick={() => onDelete(committee)}
+                            className="text-destructive/80 hover:text-destructive transition-colors"
+                            title="Delete Committee"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </PermissionGate>
                       </div>
                     </TableCell>
                   </TableRow>
