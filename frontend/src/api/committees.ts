@@ -81,6 +81,53 @@ export interface CommitteeDocument {
   uploaded_by: string | null;
 }
 
+export interface RoleDistributionMember {
+  employee_id: string;
+  name: string;
+  office: string | null;
+  committee_count: number;
+  committees: { id: number; name: string; office: string | null; status: string }[];
+}
+
+export interface RoleDistributionEntry {
+  role: string;
+  member_count: number;
+  total_memberships: number;
+  members: RoleDistributionMember[];
+}
+
+export interface RoleDistributionReport {
+  roles: RoleDistributionEntry[];
+}
+
+export interface StalledCommitteeMember {
+  employee_id: string;
+  name: string;
+  role: string;
+}
+
+export interface StalledCommittee {
+  id: number;
+  name: string;
+  committee_type: string;
+  committee_status: string;
+  office: string | null;
+  created_at: string;
+  last_activity: string;
+  days_stalled: number;
+  is_overdue: boolean;
+  deadline: string | null;
+  member_count: number;
+  members: StalledCommitteeMember[];
+}
+
+export interface StalledCommitteesReport {
+  days_threshold: number;
+  cutoff: string;
+  count: number;
+  committees: StalledCommittee[];
+}
+
 export const committeesService = {
   getAll: async () => {
     const response = await apiClient.get("/api/committee/committees/all/");
@@ -195,5 +242,15 @@ export const committeesService = {
     // Based on committee/urls.py: path('committees/<str:committee_id>/members/<str:employee_id>/', RemoveMemberView.as_view(), name='remove-member-legacy'),
     const response = await apiClient.delete(`/api/committee/committees/${committeeId}/members/${employeeId}/`);
     return response.data;
-  }
+  },
+
+  getRoleDistribution: async (): Promise<RoleDistributionReport> => {
+    const response = await apiClient.get('/api/committee/committees/reports/role-distribution/');
+    return response.data;
+  },
+
+  getStalledCommittees: async (days = 30): Promise<StalledCommitteesReport> => {
+    const response = await apiClient.get(`/api/committee/committees/reports/stalled/?days=${days}`);
+    return response.data;
+  },
 };

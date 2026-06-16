@@ -1463,3 +1463,167 @@ class CommitteeStatsView(APIView):
                 "by_office": by_office,
             },
         }, status=status.HTTP_200_OK)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Report: Role Distribution
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RoleDistributionReportView(APIView):
+    """GET /committees/reports/role-distribution/
+
+    Returns how many active members hold each committee role across all
+    committees, plus a per-role member breakdown (name, employee_id,
+    committee_count).  Requires committee.view_cross_office permission.
+    """
+    permission_classes = [IsAuthenticated, HasPermission('committee.view_cross_office')]
+
+    def get(self, request):
+        from django.db.models import Count, Q
+
+        # All active memberships
+        memberships = (
+            CommitteeMembership.objects
+            .filter(is_active=True)
+            .select_related('user', 'committee', 'committee__office')
+        )
+
+        # Build role → {member_id → {name, employee_id, committees[]}}
+        role_map: dict = {}
+        for m in memberships:
+            role = (m.committee_role or 'member').strip()
+            if role not in role_map:
+                role_map[role] = {}
+            uid = m.user.employee_id
+            if uid not in role_map[role]:
+                role_map[role][uid] = {
+                    'employee_id': uid,
+                    'name': (
+                        f"{m.user.first_name} {m.user.last_name}".strip()
+                        or m.user.username
+                    ),
+                    'office': m.user.office.name if m.user.office else None,
+                    'committees': [],
+                }
+            role_map[role][uid]['committees'].append({
+                'id': m.committee.id,
+                'name': m.committee.name,
+                'office': m.committee.office.name if m.committee.office else None,
+                'status': m.committee.committee_status,
+            })
+
+        result = []
+        for role, members in sorted(role_map.items()):
+            member_list = sorted(
+                [
+                    {**info, 'committee_count': len(info['committees'])}
+                    for info in members.values()
+                ],
+                key=lambda x: -x['committee_count'],
+            )
+            result.append({
+                'role': role,
+                'member_count': len(member_list),
+                'total_memberships': sum(m['committee_count'] for m in member_list),
+                'members': member_list,
+            })
+
+        # Sort by member_count descending
+        result.sort(key=lambda r: -r['member_count'])
+
+        return Response({'roles': result}, status=200)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Report: Stalled / Inactive Committees
+# ─────────────────────────────────────────────────────────────────────────────
+
+class StalledCommitteesReportView(APIView):
+    """GET /committees/reports/stalled/?days=30
+
+    Returns non-closed committees whose last activity (updated_at or latest
+    document upload) is older than `days` days.  Requires
+    committee.view_cross_office permission.
+    """
+    permission_classes = [IsAuthenticated, HasPermission('committee.view_cross_office')]
+
+    def get(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.db.models import Max, Subquery, OuterRef
+
+        try:
+            days = max(1, int(request.query_params.get('days', 30)))
+        except (ValueError, TypeError):
+            days = 30
+
+        cutoff = timezone.now() - timedelta(days=days)
+
+        # Latest document upload per committee (subquery)
+        latest_doc = (
+            CommitteeDocument.objects
+            .filter(committee=OuterRef('pk'))
+            .order_by('-uploaded_at')
+            .values('uploaded_at')[:1]
+        )
+
+        qs = (
+            Committee.objects
+            .exclude(committee_status__in=['completed', 'dissolved'])
+            .annotate(latest_doc_at=Subquery(latest_doc))
+            .select_related('office', 'created_by')
+            .prefetch_related('checkpoints', 'memberships__user')
+        )
+
+        stalled = []
+        for c in qs:
+            # Skip if already closed via checkpoint logic
+            if is_committee_closed(c):
+                continue
+
+            # Determine last activity: max of updated_at and latest doc upload
+            last_activity = c.updated_at
+            if c.latest_doc_at and c.latest_doc_at > last_activity:
+                last_activity = c.latest_doc_at
+
+            if last_activity >= cutoff:
+                continue  # Active recently — not stalled
+
+            days_stalled = (timezone.now() - last_activity).days
+
+            active_members = [
+                {
+                    'employee_id': m.user.employee_id,
+                    'name': (
+                        f"{m.user.first_name} {m.user.last_name}".strip()
+                        or m.user.username
+                    ),
+                    'role': m.committee_role,
+                }
+                for m in c.memberships.filter(is_active=True)
+            ]
+
+            stalled.append({
+                'id': c.id,
+                'name': c.name,
+                'committee_type': c.committee_type,
+                'committee_status': c.committee_status,
+                'office': c.office.name if c.office else None,
+                'created_at': c.created_at.isoformat(),
+                'last_activity': last_activity.isoformat(),
+                'days_stalled': days_stalled,
+                'is_overdue': is_committee_overdue(c),
+                'deadline': c.deadline.isoformat() if c.deadline else None,
+                'member_count': len(active_members),
+                'members': active_members,
+            })
+
+        # Sort: most stalled first
+        stalled.sort(key=lambda x: -x['days_stalled'])
+
+        return Response({
+            'days_threshold': days,
+            'cutoff': cutoff.isoformat(),
+            'count': len(stalled),
+            'committees': stalled,
+        }, status=200)

@@ -13,6 +13,7 @@ from .views import (
     CommitteePhaseCheckpointDetailView, CommitteePhaseTransitionView,
     MyCommitteesReportView, OfficeCommitteesView, CommitteeStatsView,
     CommitteeDocumentView, CommitteeDocumentDetailView, CommitteeDocumentServeView, CommitteeStatusView,
+    RoleDistributionReportView, StalledCommitteesReportView,
 )
 
 urlpatterns = [
@@ -22,6 +23,8 @@ urlpatterns = [
     path('committees/reports/my-committees/', MyCommitteesReportView.as_view(), name='my-committees-report'),
     path('committees/reports/office/', OfficeCommitteesView.as_view(), name='office-committees-report'),
     path('committees/reports/stats/', CommitteeStatsView.as_view(), name='committee-stats-report'),
+    path('committees/reports/role-distribution/', RoleDistributionReportView.as_view(), name='role-distribution-report'),
+    path('committees/reports/stalled/', StalledCommitteesReportView.as_view(), name='stalled-committees-report'),
     path('roles/', CommitteeRolesView.as_view(), name='committee-roles'),
     path('roles/manage/', CommitteeRolesCRUDView.as_view(), name='committee-roles-crud'),
     path('roles/manage/<int:role_id>/', CommitteeRoleDetailView.as_view(), name='committee-role-detail'),

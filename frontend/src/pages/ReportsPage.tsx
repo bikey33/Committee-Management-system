@@ -25,6 +25,9 @@ import {
   Shield,
   BookOpen,
   UserCheck,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +57,7 @@ import {
   committeesService,
   type MyCommitteeReportItem,
   type Committee,
+  type StalledCommittee,
 } from "@/api/committees";
 import { usersService, type User as UserModel } from "@/api/users";
 import { authService } from "@/api/auth";
@@ -206,6 +210,12 @@ export function ReportsPage() {
               User-wise
             </TabsTrigger>
           </PermissionGate>
+          <PermissionGate codename="committee.view_cross_office">
+            <TabsTrigger value="stalled" className="flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Stalled
+            </TabsTrigger>
+          </PermissionGate>
         </TabsList>
 
         <TabsContent value="active">
@@ -229,6 +239,11 @@ export function ReportsPage() {
         <PermissionGate codename="committee.view_cross_office">
           <TabsContent value="userwise">
             <UserWiseReport onView={setDetailId} />
+          </TabsContent>
+        </PermissionGate>
+        <PermissionGate codename="committee.view_cross_office">
+          <TabsContent value="stalled">
+            <StalledCommitteesReport onView={setDetailId} />
           </TabsContent>
         </PermissionGate>
       </Tabs>
@@ -745,6 +760,179 @@ function UserWiseReport({ onView }: { onView: (id: string) => void }) {
               </div>
             </div>
           )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Stalled Committees Report ────────────────────────────────────────────────
+
+const DAYS_OPTIONS = [7, 14, 30, 60, 90];
+
+function StalledCommitteesReport({ onView }: { onView: (id: string) => void }) {
+  const [days, setDays] = useState(30);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["stalled-committees", days],
+    queryFn: () => committeesService.getStalledCommittees(days),
+  });
+
+  const toggleRow = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const committees: StalledCommittee[] = data?.committees ?? [];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Days filter */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-muted-foreground">No activity in the last:</span>
+        {DAYS_OPTIONS.map((d) => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            className={cn(
+              "rounded-full px-4 py-1.5 text-sm font-semibold border transition-colors",
+              days === d
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background text-muted-foreground border-border hover:border-primary hover:text-primary"
+            )}
+          >
+            {d} days
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-rose-200 bg-rose-50 py-12 text-center">
+          <AlertTriangle className="h-8 w-8 text-rose-300" />
+          <p className="text-sm font-medium text-rose-600">Could not load stalled committees.</p>
+        </div>
+      ) : (
+        <>
+          {/* Summary */}
+          <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
+            <p className="text-sm text-amber-800">
+              <span className="font-semibold">{committees.length}</span> committee{committees.length !== 1 ? "s" : ""} stalled — no activity for more than {days} days.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-card shadow-sm overflow-hidden">
+            <div className="w-full overflow-x-auto">
+              <Table className="min-w-[800px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8"></TableHead>
+                    <TableHead className="w-[240px]">Committee</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Office</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Days Stalled</TableHead>
+                    <TableHead>Last Activity</TableHead>
+                    <TableHead>Deadline</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {committees.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
+                        No stalled committees — all are active within the last {days} days.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    committees.map((c) => (
+                      <>
+                        <TableRow
+                          key={c.id}
+                          className={cn(
+                            "cursor-pointer hover:bg-muted/50 transition-colors",
+                            c.is_overdue && "bg-rose-50/50"
+                          )}
+                          onClick={() => toggleRow(c.id)}
+                        >
+                          <TableCell className="pl-4">
+                            {expanded.has(c.id)
+                              ? <ChevronDown size={15} className="text-muted-foreground" />
+                              : <ChevronRight size={15} className="text-muted-foreground" />}
+                          </TableCell>
+                          <TableCell
+                            className="font-medium text-foreground py-4"
+                            onClick={(e) => { e.stopPropagation(); onView(String(c.id)); }}
+                          >
+                            <span className="hover:underline cursor-pointer">{c.name}</span>
+                          </TableCell>
+                          <TableCell className="capitalize text-muted-foreground">{c.committee_type}</TableCell>
+                          <TableCell className="text-muted-foreground">{c.office ?? "—"}</TableCell>
+                          <TableCell>
+                            <Badge
+                              className={cn(
+                                "rounded-full px-3 text-xs capitalize",
+                                c.is_overdue
+                                  ? "bg-rose-600 text-white border-transparent"
+                                  : "bg-amber-500 text-white border-transparent"
+                              )}
+                            >
+                              {c.is_overdue ? "Overdue" : c.committee_status.replace(/_/g, " ")}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <span className={cn(
+                              "font-semibold text-sm",
+                              c.days_stalled > 60 ? "text-rose-600" : c.days_stalled > 30 ? "text-amber-600" : "text-foreground"
+                            )}>
+                              {c.days_stalled}d
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {new Date(c.last_activity).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {c.deadline
+                              ? <span className={c.is_overdue ? "text-rose-600 font-medium" : "text-muted-foreground"}>
+                                  {new Date(c.deadline).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                                </span>
+                              : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                        </TableRow>
+                        {expanded.has(c.id) && (
+                          <TableRow key={`${c.id}-members`} className="bg-accent/20">
+                            <TableCell />
+                            <TableCell colSpan={7} className="py-2 pl-8">
+                              <p className="text-xs font-semibold text-muted-foreground mb-1.5">
+                                Members ({c.member_count})
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {c.members.length === 0
+                                  ? <span className="text-xs text-muted-foreground italic">No active members</span>
+                                  : c.members.map((m) => (
+                                      <span key={m.employee_id} className="text-xs rounded-full border border-border bg-background px-2.5 py-1">
+                                        <span className="font-medium">{m.name}</span>
+                                        <span className="ml-1 text-muted-foreground capitalize">· {m.role.replace(/_/g, " ")}</span>
+                                      </span>
+                                    ))}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
         </>
       )}
     </div>

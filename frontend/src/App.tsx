@@ -6,6 +6,7 @@ import { OfficesPage } from './pages/OfficesPage'
 import { UsersPage } from './pages/UsersPage'
 import { EmployeesPage } from './pages/EmployeesPage'
 import { ReportsPage } from './pages/ReportsPage'
+import { RolesPage } from './pages/RolesPage'
 import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
 import { ChangePasswordPage } from './pages/ChangePasswordPage'
@@ -39,6 +40,9 @@ function App() {
                 </Route>
                 <Route element={<ProtectedRoute requiredPermission="reports.view" />}>
                   <Route path="/reports" element={<ReportsPage />} />
+                </Route>
+                <Route element={<ProtectedRoute requiredPermission="roles.manage" />}>
+                  <Route path="/roles" element={<RolesPage />} />
                 </Route>
               </Route>
             </Route>

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Building2, Users, User, Contact, BarChart3, LayoutDashboard, LogOut, LucideIcon } from "lucide-react";
+import { Building2, Users, User, Contact, BarChart3, LayoutDashboard, LogOut, Shield, LucideIcon } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { authService } from "@/api/auth";
@@ -22,6 +22,7 @@ const navItems: NavItem[] = [
   { to: "/employees",  label: "Employees",  icon: Contact,                      permission: "users.view" },
   { to: "/users",      label: "Users",      icon: User,                         permission: "users.view" },
   { to: "/reports",    label: "Reports",    icon: BarChart3,                    permission: "reports.view" },
+  { to: "/roles",      label: "Roles",      icon: Shield,                       permission: "roles.manage" },
 ];
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
